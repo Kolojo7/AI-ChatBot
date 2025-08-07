@@ -14,6 +14,9 @@
 # Ignore venv
 voice-backend/.venv/
 
+# node_modules
+jarvis-coder/node_modules/
+
 # misc
 .DS_Store
 .env.local
