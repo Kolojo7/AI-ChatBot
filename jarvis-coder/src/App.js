@@ -92,12 +92,6 @@ export default function App() {
         </div>
         <div className="helix-sidebar-btns">
           <button className="helix-btn"><FaCode /></button>
-          <button
-            className={`helix-btn ${listening ? "mic-on" : ""}`}
-            onClick={handleMicClick}
-          >
-            <FaMicrophone />
-          </button>
         </div>
       </aside>
 
@@ -129,13 +123,22 @@ export default function App() {
         </div>
         {/* Input area */}
         <form className="helix-input-row" onSubmit={handleSend}>
-          <input
-            type="text"
-            className="helix-input"
-            placeholder="Type your prompt for Helix..."
-            value={input}
-            onChange={e => setInput(e.target.value)}
-          />
+          <div className="helix-input-wrapper">
+            <input
+              type="text"
+              className="helix-input"
+              placeholder="Type your prompt for Helix..."
+              value={input}
+              onChange={e => setInput(e.target.value)}
+            />
+            <button
+              type="button"
+              className={`helix-mic-btn ${listening ? "mic-on" : ""}`}
+              onClick={handleMicClick}
+            >
+              <FaMicrophone />
+            </button>
+          </div>
           <button className="helix-send-btn" type="submit">
             Send
           </button>

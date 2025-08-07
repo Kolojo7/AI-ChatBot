@@ -65,7 +65,8 @@ body, html, #root {
 }
 .helix-btn:hover { color: #ffabbc; }
 
-.helix-btn.mic-on svg {
+.helix-btn.mic-on svg,
+.helix-mic-btn.mic-on svg {
   animation: micGlow 1.2s infinite;
   color: #ffabbc;
 }
@@ -162,23 +163,43 @@ body, html, #root {
 
 .helix-input-row {
   width: 100%;
-  max-width: 640px;
+  max-width: 700px;
   display: flex;
   margin-top: 10px;
 }
-.helix-input {
+.helix-input-wrapper {
   flex: 1;
-  padding: 13px 20px;
+  position: relative;
+}
+.helix-input {
+  width: 100%;
+  padding: 13px 48px 13px 20px;
   font-size: 1.1rem;
   border-radius: 15px 0 0 15px;
   border: 2px solid #ff3d71c8;
+  border-right: none;
   background: rgba(41, 4, 21, 0.93);
   color: #ffd1df;
   outline: none;
   transition: border-color 0.2s;
+  box-sizing: border-box;
 }
 .helix-input:focus {
   border-color: #ff4568;
+}
+.helix-mic-btn {
+  position: absolute;
+  top: 55%;
+  right: 8px;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #ff5770;
+  font-size: 1.3rem;
+  cursor: pointer;
+}
+.helix-mic-btn:hover {
+  color: #ffabbc;
 }
 .helix-send-btn {
   background: linear-gradient(90deg,#ff3d71 40%,#2b0012 100%);
