@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { FaMicrophone, FaRobot, FaCode } from "react-icons/fa";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import './Helix.css'; // We'll keep the filename for now
 
 function TypingDots() {
@@ -20,6 +20,7 @@ export default function App() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [listening, setListening] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -48,6 +49,24 @@ export default function App() {
     setInput("");
   };
 
+   const handleMicClick = async () => {
+    if (listening) {
+      setListening(false);
+      return;
+    }
+    setListening(true);
+    try {
+      const res = await fetch("http://localhost:8000/transcribe", { method: "POST" });
+      const data = await res.json();
+      if (data.text) {
+        setInput(prev => (prev ? prev + " " + data.text : data.text));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    setListening(false);
+  };
+
   function renderContent(content) {
     if (content.startsWith("```")) {
       const match = content.match(/```(\w+)?\n([\s\S]*?)```/);
@@ -73,7 +92,12 @@ export default function App() {
         </div>
         <div className="helix-sidebar-btns">
           <button className="helix-btn"><FaCode /></button>
-          <button className="helix-btn"><FaMicrophone /></button>
+          <button
+            className={`helix-btn ${listening ? "mic-on" : ""}`}
+            onClick={handleMicClick}
+          >
+            <FaMicrophone />
+          </button>
         </div>
       </aside>
 

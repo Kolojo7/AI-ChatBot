@@ -65,6 +65,17 @@ body, html, #root {
 }
 .helix-btn:hover { color: #ffabbc; }
 
+.helix-btn.mic-on svg {
+  animation: micGlow 1.2s infinite;
+  color: #ffabbc;
+}
+
+@keyframes micGlow {
+  0% { filter: drop-shadow(0 0 0px #ff3d71); }
+  50% { filter: drop-shadow(0 0 8px #ff3d71); }
+  100% { filter: drop-shadow(0 0 0px #ff3d71); }
+}
+
 .helix-main {
   flex: 1;
   display: flex;

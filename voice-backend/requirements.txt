@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+SpeechRecognition
+pyaudio
+vosk

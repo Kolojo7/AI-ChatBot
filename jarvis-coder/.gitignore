@@ -11,6 +11,9 @@
 # production
 /build
 
+# Ignore venv
+voice-backend/.venv/
+
 # misc
 .DS_Store
 .env.local
