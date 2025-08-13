@@ -1,18 +1,16 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { FaMicrophone, FaRobot, FaCode, FaCopy, FaChevronDown, FaChevronUp, FaSync } from "react-icons/fa";
+import {
+  FaMicrophone, FaRobot, FaCode, FaCopy, FaChevronDown, FaChevronUp, FaSync, FaMoon, FaSun
+} from "react-icons/fa";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import "./Helix.css";
 
-/* >>> API base for the backend */
 const API_BASE = process.env.REACT_APP_API_BASE || "http://127.0.0.1:4000";
 
+/* ---------- Small UI bits ---------- */
 function TypingDots() {
-  return (
-    <span className="typing-dots">
-      <span>.</span><span>.</span><span>.</span>
-    </span>
-  );
+  return <span className="typing-dots"><span>.</span><span>.</span><span>.</span></span>;
 }
 
 function CollapsibleCode({ language = "text", code = "" }) {
@@ -53,11 +51,95 @@ function renderRichContent(text) {
   return parts.length ? <>{parts}</> : <span>{text}</span>;
 }
 
+/* ---------- Model -> Visuals ---------- */
+function parseModel(model = "") {
+  const m = model.toLowerCase();
+  const family =
+    m.includes("deepseek") ? "code" :
+    m.includes("qwen")     ? "reason" :
+    m.includes("mistral")  ? "concise" :
+    m.includes("gemma")    ? "light" :
+    m.includes("llama")    ? "general" : "general";
+
+  const sizeMatch = m.match(/(\d+)\s*b/);
+  const sizeB = sizeMatch ? Number(sizeMatch[1]) : 7; // default 7B
+  let tier = "light";
+  if (sizeB > 8 && sizeB <= 15) tier = "mid";
+  else if (sizeB > 15 && sizeB <= 33) tier = "pro";
+  else if (sizeB > 33) tier = "ultra";
+
+  return { family, sizeB, tier };
+}
+
+function getModelVisual(model) {
+  const { family, tier } = parseModel(model);
+
+  const palettes = {
+    code:   { a:"#50e3c2", b:"#d16ba5", ring:"#7dd6ff", glow:"rgba(80,227,194,.25)" },
+    reason: { a:"#89a7ff", b:"#b3a1ff", ring:"#a8c1ff", glow:"rgba(137,167,255,.25)" },
+    concise:{ a:"#ff9a5f", b:"#ffd66b", ring:"#ffcaa8", glow:"rgba(255,154,95,.25)" },
+    light:  { a:"#9fffb3", b:"#63e6be", ring:"#b8ffd1", glow:"rgba(159,255,179,.22)" },
+    general:{ a:"#ff6fa1", b:"#ff3d71", ring:"#ff9fc0", glow:"rgba(255,63,113,.22)" },
+  };
+  const p = palettes[family] || palettes.general;
+
+  const speeds = { light: 14, mid: 11, pro: 8, ultra: 6 };
+  const speed = speeds[tier] || 12;
+
+  const label = { light: "Light", mid: "Mid", pro: "Pro", ultra: "Ultra" }[tier];
+
+  return { colors: p, speed, tierLabel: label };
+}
+
+/* ---------- Animated DNA Helix ---------- */
+function HelixCore({ spinning, colors, speed }) {
+  const styleVars = {
+    ['--helixA']: colors.a,
+    ['--helixB']: colors.b,
+    ['--helixRing']: colors.ring,
+    ['--helixGlow']: colors.glow,
+    ['--spinSec']: `${speed}s`
+  };
+  return (
+    <div className={`helix-core ${spinning ? "spin" : ""}`} style={styleVars}>
+      <svg viewBox="0 0 120 120" className="helix-svg" aria-hidden>
+        <circle cx="60" cy="60" r="54" className="ring" />
+        {[...Array(22)].map((_, i) => {
+          const t = (i / 21) * Math.PI * 2;
+          const xA = 60 + Math.sin(t) * 20;
+          const xB = 60 - Math.sin(t) * 20;
+          const y = 12 + i * (96 / 21);
+          return (
+            <g key={i}>
+              <circle cx={xA} cy={y} r="2.1" className="node a" />
+              <circle cx={xB} cy={y} r="2.1" className="node b" />
+              <line x1={xA} y1={y} x2={xB} y2={y} className="rung" />
+            </g>
+          );
+        })}
+      </svg>
+      <div className="helix-core-glow" />
+    </div>
+  );
+}
+
+function PowerBadge({ tierLabel }) {
+  return <span className="helix-badge power">Power: <strong>{tierLabel}</strong></span>;
+}
+
+/* ---------- App ---------- */
 export default function App() {
   const DEFAULT_GREETING = "Hello, I am Helix. How can I assist you with your code today?";
   const bottomRef = useRef(null);
 
-  // Curated descriptions
+  // Theme
+  const [theme, setTheme] = useState(() => localStorage.getItem("helix:theme") || "deep");
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("helix:theme", theme);
+  }, [theme]);
+
+  // Descriptions for tooltip
   const MODEL_INFO = useMemo(() => ({
     "deepseek-coder:33b": "Best for code generation, refactors, debugging.",
     "qwen2.5:14b-instruct": "Great for STEM, step-by-step reasoning.",
@@ -67,12 +149,12 @@ export default function App() {
     "llama3.1:70b": "High quality but hardware heavy."
   }), []);
 
-  // Installed models list + errors
+  // Installed models + errors
   const [installed, setInstalled] = useState([]);
   const [modelsErr, setModelsErr] = useState("");
   const [loadingModels, setLoadingModels] = useState(false);
 
-  // Selected model & confirmed (from backend)
+  // Selection + confirmed usage
   const savedModel = typeof window !== "undefined" ? localStorage.getItem("helix:model") : null;
   const [model, setModel] = useState(savedModel || "deepseek-coder:33b");
   const [confirmedModel, setConfirmedModel] = useState(null);
@@ -82,12 +164,19 @@ export default function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const currentPurpose = MODEL_INFO[model] || "Local Ollama model";
+  // Visuals derived from current model
+  const visuals = useMemo(() => getModelVisual(model), [model]);
+
+  // Push accent colors across UI
+  useEffect(() => {
+    const root = document.documentElement.style;
+    root.setProperty("--accent", visuals.colors.b);
+    root.setProperty("--accent-soft", visuals.colors.a);
+  }, [visuals]);
 
   useEffect(() => { localStorage.setItem("helix:model", model); }, [model]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
-  // Load installed models
   async function refreshModels() {
     setLoadingModels(true); setModelsErr("");
     try {
@@ -109,7 +198,6 @@ export default function App() {
   const installedSet = new Set(installed.map(n => n.trim().toLowerCase()));
   const isInstalled = (name) => installedSet.has((name || "").trim().toLowerCase());
 
-  // Send prompt (SSE with meta "model")
   async function sendPrompt(prompt) {
     setLoading(true);
     setConfirmedModel(null);
@@ -123,7 +211,6 @@ export default function App() {
       });
 
       if (!res.ok || !res.body) {
-        // Fallback non-stream
         const nr = await fetch(`${API_BASE}/api/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -177,9 +264,29 @@ export default function App() {
   }
 
   const handleSend = (e) => { e.preventDefault(); if (!input.trim()) return; sendPrompt(input.trim()); setInput(""); };
+  const currentPurpose = MODEL_INFO[model] || "Local Ollama model";
+
+  /* ----- Suggestions failsafe + ensure current option ----- */
+  const DEFAULT_SUGGESTIONS = [
+    "deepseek-coder:33b",
+    "qwen2.5:14b-instruct",
+    "llama3.1:8b",
+    "mistral:7b-instruct",
+    "gemma:7b-instruct",
+    "llama3.1:70b"
+  ];
+
+  const suggestedFromInfo = Object.keys(MODEL_INFO || {});
+  let suggestionModels = suggestedFromInfo.length ? suggestedFromInfo : DEFAULT_SUGGESTIONS;
+  suggestionModels = suggestionModels.filter(m => !installedSet.has(m.trim().toLowerCase()));
+
+  const ensureCurrentModelOption = !isInstalled(model)
+    && !suggestionModels.map(s => s.toLowerCase()).includes((model || "").toLowerCase());
 
   return (
     <div className={`helix-root ${loading ? "is-thinking" : ""}`}>
+      <div className="helix-bg-glow" />
+      <div className="helix-noise" />
       <div className="helix-copy-toast">Copied!</div>
 
       <aside className="helix-sidebar">
@@ -191,12 +298,23 @@ export default function App() {
           <button className="helix-btn" title="Code"><FaCode /></button>
           <button className="helix-btn" title="Voice (coming soon)"><FaMicrophone /></button>
         </div>
+        <div className="helix-theme-toggle">
+          <button
+            className="helix-mini-btn"
+            onClick={() => setTheme(prev => prev === "crimson" ? "deep" : "crimson")}
+            title="Toggle Theme"
+          >
+            {theme === "crimson" ? <FaMoon/> : <FaSun/>} {theme === "crimson" ? "Deep Space" : "Crimson"}
+          </button>
+        </div>
       </aside>
 
       <main className="helix-main">
-        <div className="helix-core-outer"><div className="helix-core"><FaRobot /></div></div>
+        <div className="helix-core-outer">
+          <HelixCore spinning={loading} colors={visuals.colors} speed={visuals.speed} />
+        </div>
 
-        {/* Model picker + status */}
+        {/* Model picker */}
         <div className="helix-model-row">
           <div className="helix-model-top">
             <select
@@ -205,14 +323,25 @@ export default function App() {
               onChange={(e) => setModel(e.target.value)}
               title={currentPurpose}
             >
-              {/* Installed first */}
-              {installed.map((m) => (
-                <option key={`i-${m}`} value={m}>{m}</option>
-              ))}
-              {/* Suggestions not installed */}
-              {Object.keys(MODEL_INFO)
-                .filter(m => !installedSet.has(m.trim().toLowerCase()))
-                .map(m => (<option key={`s-${m}`} value={m}>{m} — (not installed)</option>))}
+              {ensureCurrentModelOption && (
+                <option value={model}>{model || "(no model selected)"}</option>
+              )}
+
+              <optgroup label="Installed">
+                {installed.length === 0 && <option value="" disabled>(none)</option>}
+                {installed.map((m) => (
+                  <option key={`i-${m}`} value={m}>{m}</option>
+                ))}
+              </optgroup>
+
+              <optgroup label="Suggestions">
+                {suggestionModels.length === 0 && <option value="" disabled>(none)</option>}
+                {suggestionModels.map(m => (
+                  <option key={`s-${m}`} value={m}>
+                    {m}{MODEL_INFO[m] ? ` — ${MODEL_INFO[m]}` : " — (not installed)"}
+                  </option>
+                ))}
+              </optgroup>
             </select>
 
             <button className="helix-mini-btn" onClick={refreshModels} disabled={loadingModels} title="Refresh installed models">
@@ -220,7 +349,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* Badges */}
           <div className="helix-model-purpose">
             <span className={`helix-badge ${isInstalled(model) ? "ok" : "warn"}`}>
               {isInstalled(model) ? "Installed" : "Not installed"}
@@ -230,6 +358,7 @@ export default function App() {
                 Using: <strong>{confirmedModel}</strong>
               </span>
             )}
+            <PowerBadge tierLabel={visuals.tierLabel} />
           </div>
 
           {modelsErr && <div className="helix-warning">Couldn’t read installed models. {modelsErr}</div>}
