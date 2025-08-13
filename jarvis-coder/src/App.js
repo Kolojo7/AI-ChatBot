@@ -94,11 +94,11 @@ function getModelVisual(model) {
 /* ---------- Animated DNA Helix ---------- */
 function HelixCore({ spinning, colors, speed }) {
   const styleVars = {
-    ['--helixA']: colors.a,
-    ['--helixB']: colors.b,
-    ['--helixRing']: colors.ring,
-    ['--helixGlow']: colors.glow,
-    ['--spinSec']: `${speed}s`
+    '--helixA': colors.a,
+    '--helixB': colors.b,
+    '--helixRing': colors.ring,
+    '--helixGlow': colors.glow,
+    '--spinSec': `${speed}s`
   };
   return (
     <div className={`helix-core ${spinning ? "spin" : ""}`} style={styleVars}>
