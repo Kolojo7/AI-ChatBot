@@ -163,16 +163,10 @@ export default function App() {
   const [messages, setMessages] = useState([{ type: "ai", content: DEFAULT_GREETING }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [listening, setListening] = useState(false);
 
   // Visuals derived from current model
   const visuals = useMemo(() => getModelVisual(model), [model]);
-
-  // Push accent colors across UI
-  useEffect(() => {
-    const root = document.documentElement.style;
-    root.setProperty("--accent", visuals.colors.b);
-    root.setProperty("--accent-soft", visuals.colors.a);
-  }, [visuals]);
 
   useEffect(() => { localStorage.setItem("helix:model", model); }, [model]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
@@ -263,6 +257,25 @@ export default function App() {
     }
   }
 
+  //code for handeling mic click events
+   const handleMicClick = async () => {
+    if (listening) {
+      setListening(false);
+      return;
+    }
+    setListening(true);
+    try {
+      const res = await fetch("http://localhost:8000/transcribe", { method: "POST" });
+      const data = await res.json();
+      if (data.text) {
+        setInput(prev => (prev ? prev + " " + data.text : data.text));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+    setListening(false);
+  };
+
   const handleSend = (e) => { e.preventDefault(); if (!input.trim()) return; sendPrompt(input.trim()); setInput(""); };
   const currentPurpose = MODEL_INFO[model] || "Local Ollama model";
 
@@ -296,7 +309,6 @@ export default function App() {
         </div>
         <div className="helix-sidebar-btns">
           <button className="helix-btn" title="Code"><FaCode /></button>
-          <button className="helix-btn" title="Voice (coming soon)"><FaMicrophone /></button>
         </div>
         <div className="helix-theme-toggle">
           <button
@@ -382,21 +394,30 @@ export default function App() {
           )}
           <div ref={bottomRef} />
         </div>
-
+        {/* Input area */}
         <form className="helix-input-row" onSubmit={handleSend}>
-          <input
-            type="text"
-            className="helix-input"
-            placeholder="Type your prompt for Helix..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-          />
-        <button className="helix-send-btn" type="submit">Send</button>
+          <div className="helix-input-wrapper">
+            <input
+              type="text"
+              className="helix-input"
+              placeholder="Type your prompt for Helix..."
+              value={input}
+              onChange={e => setInput(e.target.value)}
+            />
+            <button
+              type="button"
+              className={`helix-mic-btn ${listening ? "mic-on" : ""}`}
+              title="Voice"
+              onClick={handleMicClick}
+            >
+              <FaMicrophone />
+            </button>
+          </div>
+          <button className="helix-send-btn" type="submit">
+            Send
+          </button>
         </form>
-
-        <p className="helix-status">
-          <span className={`helix-status-dot ${loading ? "on" : ""}`} /> Helix AI is running offline on your device.
-        </p>
+        <p className="helix-status">Helix AI is running offline on your device.</p>
       </main>
     </div>
   );

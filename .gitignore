@@ -1,5 +1,4 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
 /node_modules
 /.pnp
@@ -11,6 +10,12 @@
 # production
 /build
 
+# Ignore venv
+voice-backend/.venv/
+
+# node_modules
+jarvis-coder/node_modules/
+
 # misc
 .DS_Store
 .env.local
@@ -21,4 +26,3 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-node_modules
