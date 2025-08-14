@@ -3,3 +3,4 @@ uvicorn
 SpeechRecognition
 pyaudio
 vosk
+sounddevice
