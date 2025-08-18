@@ -1,217 +1,389 @@
+// server/server.js
+// Helix backend with memory + robust SSE streaming for Ollama
+
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 
-const app = express();
-app.use(express.json({ limit: '2mb' }));
-app.use(cors({
-  origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/, /^http:\/\/192\.168\.\d+\.\d+:\d+$/],
-  methods: ['GET','POST','OPTIONS'],
-  allowedHeaders: ['Content-Type'],
-}));
+// --- Web Streams polyfill (helps Node 16/17 use undici cleanly)
+import { ReadableStream, WritableStream, TransformStream } from 'stream/web';
+globalThis.ReadableStream = globalThis.ReadableStream || ReadableStream;
+globalThis.WritableStream = globalThis.WritableStream || WritableStream;
+globalThis.TransformStream = globalThis.TransformStream || TransformStream;
 
-const PORT = process.env.PORT || 4000;
+// --- Fetch from undici (stable for Node 16–20)
+import { fetch, Headers, Request, Response } from 'undici';
+globalThis.fetch = fetch;
+globalThis.Headers = Headers;
+globalThis.Request = Request;
+globalThis.Response = Response;
+
+// ---------------------------- Config ----------------------------
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PORT = Number(process.env.PORT || 4000);
+const HOST = process.env.HOST || '127.0.0.1';
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
-const DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'deepseek-coder:33b';
 
+// ---------------------------- App ------------------------------
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+
+// --- Memory UI state ---
+const [facts, setFacts] = useState({});
+const [factKey, setFactKey] = useState("");
+const [factValue, setFactValue] = useState("");
+
+const [noteText, setNoteText] = useState("");
+const [noteQ, setNoteQ] = useState("");
+const [noteResults, setNoteResults] = useState([]);
+
+// You can change this if you later add real users:
+const userId = "default";
+
+// --- Memory API helpers ---
+async function loadFacts() {
+  try {
+    const r = await fetch(`${API_BASE}/api/memory/facts?userId=${encodeURIComponent(userId)}`);
+    const j = await r.json();
+    if (j.ok) setFacts(j.facts || {});
+  } catch (e) {
+    console.error("loadFacts error", e);
+  }
+}
+
+async function saveFact() {
+  if (!factKey.trim()) return;
+  try {
+    const body = { userId, facts: { [factKey.trim()]: factValue } };
+    const r = await fetch(`${API_BASE}/api/memory/facts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      setFacts(j.facts || {});
+      setFactKey("");
+      setFactValue("");
+    }
+  } catch (e) {
+    console.error("saveFact error", e);
+  }
+}
+
+async function rememberNote() {
+  if (!noteText.trim()) return;
+  try {
+    const r = await fetch(`${API_BASE}/api/memory/remember`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, text: noteText.trim() }),
+    });
+    await r.json(); // We don't need the id here
+    setNoteText("");
+  } catch (e) {
+    console.error("rememberNote error", e);
+  }
+}
+
+async function searchNotes() {
+  try {
+    const r = await fetch(`${API_BASE}/api/memory/search?userId=${encodeURIComponent(userId)}&q=${encodeURIComponent(noteQ)}&k=4`);
+    const j = await r.json();
+    if (j.ok) setNoteResults(j.results || []);
+  } catch (e) {
+    console.error("searchNotes error", e);
+  }
+}
+
+async function clearChatMemory() {
+  try {
+    await fetch(`${API_BASE}/api/memory/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what: "chat", conversationId: "default" }),
+    });
+  } catch (e) {
+    console.error("clearChatMemory error", e);
+  }
+}
+
+// ------------------------ Health & Models -----------------------
 app.get('/api/health', async (req, res) => {
   try {
     const r = await fetch(`${OLLAMA_URL}/api/tags`);
-    res.json({ ok: r.ok, model: DEFAULT_MODEL });
+    if (!r.ok) throw new Error(`ollama ${r.status}`);
+    const j = await r.json();
+    const first = (j.models && j.models[0] && j.models[0].name) || null;
+    res.json({ ok: true, model: first, ollama: OLLAMA_URL });
   } catch (e) {
-    console.error('[health] cannot reach ollama:', e?.message || e);
-    res.status(503).json({ ok: false, error: 'Cannot reach Ollama' });
+    res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
-/** FIXED: list installed models (exact names) */
 app.get('/api/models', async (req, res) => {
   try {
     const r = await fetch(`${OLLAMA_URL}/api/tags`);
-    if (!r.ok) {
-      const txt = await r.text();
-      console.error('[models] ollama error:', txt);
-      return res.status(502).json({ ok: false, error: 'Ollama error', details: txt });
-    }
-    const data = await r.json(); // { models: [{name, ...}] }
-    const names = (data.models || []).map(m => m.name).sort();
-    res.json({ ok: true, models: names });
+    if (!r.ok) throw new Error(`ollama ${r.status}`);
+    const j = await r.json();
+    const models = Array.isArray(j.models) ? j.models.map(m => m.name) : [];
+    res.json({ ok: true, models });
   } catch (e) {
-    console.error('[models] backend error:', e?.message || e);
-    res.status(500).json({ ok: false, error: 'Backend error', details: String(e) });
+    res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
-/** Non-streaming generation — returns the model used */
+// ------------------------- Memory APIs -------------------------
+app.post('/api/memory/facts', (req, res) => {
+  const { userId = 'default', facts = {} } = req.body || {};
+  const prev = profileFacts.get(userId) || {};
+  const next = { ...prev, ...facts };
+  profileFacts.set(userId, next);
+  res.json({ ok: true, facts: next });
+});
+app.get('/api/memory/facts', (req, res) => {
+  const userId = req.query.userId || 'default';
+  res.json({ ok: true, facts: profileFacts.get(userId) || {} });
+});
+app.post('/api/memory/remember', async (req, res) => {
+  const { userId = 'default', text } = req.body || {};
+  if (!text) return res.status(400).json({ ok: false, error: 'text required' });
+  try {
+    const emb = await embedText(text);
+    const item = { id: randomUUID(), userId, text, embedding: emb, ts: Date.now() };
+    vectorMemory.push(item);
+    res.json({ ok: true, id: item.id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+app.get('/api/memory/search', async (req, res) => {
+  const { userId = 'default', q = '', k = 4 } = req.query || {};
+  try {
+    const hits = await searchSemantic(userId, q, Number(k));
+    res.json({ ok: true, results: hits.map(h => ({ id: h.id, text: h.text, score: h.score })) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+app.post('/api/memory/clear', (req, res) => {
+  const { conversationId, userId = 'default', what = 'chat' } = req.body || {};
+  if (what === 'chat' && conversationId) chatMemory.delete(conversationId);
+  if (what === 'facts') profileFacts.set(userId, {});
+  if (what === 'semantic') vectorMemory = vectorMemory.filter(v => v.userId !== userId);
+  res.json({ ok: true });
+});
+
+// -------------------- SSE helpers ------------------
+function setSSEHeaders(res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+}
+
+// ------------------- Non-stream (JSON) -------------------
 app.post('/api/generate', async (req, res) => {
   try {
-    const { prompt, model, system, options } = req.body || {};
-    if (!prompt || !prompt.trim()) return res.status(400).json({ error: 'Missing prompt' });
+    let {
+      prompt = '',
+      model = 'llama3.1:8b',
+      options = {},
+      system = '',
+      conversationId = 'default',
+      userId = 'default'
+    } = req.body || {};
 
-    const usedModel = model || DEFAULT_MODEL;
-    const body = {
-      model: usedModel,
-      prompt,
-      system: system || 'You are Helix, a local assistant. Be concise and correct.',
-      stream: false,
-      options: { temperature: 0.2, ...options }
-    };
+    const hist = getHistory(conversationId, 8);
+    const facts = profileFacts.get(userId) || {};
+    const sem = await searchSemantic(userId, prompt, 4);
 
-    const r = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) return res.status(502).json({ error: 'Ollama error', details: await r.text() });
+    const preamble = [
+      system || 'You are Helix, a helpful local coding assistant.',
+      factsPreamble(facts),
+      semPreamble(sem),
+      'When answering, you may refer back to these facts/notes.'
+    ].filter(Boolean).join('\n\n');
 
-    const data = await r.json();
-    res.setHeader('X-Helix-Model', usedModel);
-    res.json({ response: data.response || '', model: usedModel });
-  } catch (err) {
-    console.error('[generate] error:', err);
-    res.status(500).json({ error: 'Backend error', details: String(err) });
-  }
-});
+    const fullPrompt =
+      `${preamble}\n\n### Conversation Snippets\n` +
+      `${hist.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n')}\n\n` +
+      `### User\n${prompt}`;
 
-/** Streaming via SSE — emits a meta event first with the model name */
-app.post('/api/stream', async (req, res) => {
-  try {
-    const { prompt, model, system, options } = req.body || {};
-    if (!prompt || !prompt.trim()) { res.writeHead(400); return res.end('Missing prompt'); }
-
-    const usedModel = model || DEFAULT_MODEL;
-
-    // SSE headers
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-
-    // Tell the client which model is in use (authoritative)
-    res.write(`event: meta\ndata: ${JSON.stringify({ model: usedModel })}\n\n`);
+    pushHistory(conversationId, { role: 'user', content: prompt });
 
     const upstream = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: usedModel,
-        prompt,
-        system: system || 'You are Helix, a local assistant. Be concise and correct.',
-        stream: true,
-        options: { temperature: 0.2, ...options }
+        model,
+        prompt: fullPrompt,
+        options,
+        stream: false
       })
     });
 
+    const text = await upstream.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    const reply = data.response || data.message || text;
+    if (reply) pushHistory(conversationId, { role: 'assistant', content: reply });
+
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[generate] error:', e);
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// ------------------- Stream (SSE) -------------------
+app.post('/api/stream', async (req, res) => {
+  try {
+    let {
+      // accept either "message" or "prompt" from client
+      message = '',
+      prompt = '',
+      messages = null,
+      system = '',
+      model = 'llama3.1:8b',
+      temperature,
+      options = {},
+      conversationId = 'default',
+      userId = 'default'
+    } = req.body || {};
+    if (!message && prompt) message = prompt;
+
+    setSSEHeaders(res);
+    const usedModel = model;
+
+    // Build memory context
+    const hist = getHistory(conversationId, 16);
+    const facts = profileFacts.get(userId) || {};
+    const queryForSem = message || (Array.isArray(messages) ? (messages[messages.length - 1]?.content || '') : '');
+    const sem = await searchSemantic(userId, queryForSem, 4);
+
+    const preamble = [
+      system || 'You are Helix, a helpful local coding assistant.',
+      factsPreamble(facts),
+      semPreamble(sem),
+      'When answering, you may refer back to these facts/notes.'
+    ].filter(Boolean).join('\n\n');
+
+    // let the UI know which model is actually used
+    res.write(`event: meta\ndata: ${JSON.stringify({ model: usedModel })}\n\n`);
+
+    // Decide chat vs prompt
+    let upstream;
+    if (Array.isArray(messages)) {
+      const withSys = [{ role: 'system', content: preamble }, ...hist, ...messages];
+      upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: usedModel,
+          messages: withSys,
+          stream: true,
+          options: {
+            ...(temperature != null ? { temperature } : {}),
+            ...options
+          }
+        })
+      });
+    } else {
+      pushHistory(conversationId, { role: 'user', content: message });
+      const fullPrompt =
+        `${preamble}\n\n### Conversation Snippets\n` +
+        `${hist.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n')}\n\n` +
+        `### User\n${message}`;
+
+      upstream = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: usedModel,
+          prompt: fullPrompt,
+          stream: true,
+          options: {
+            ...(temperature != null ? { temperature } : {}),
+            ...options
+          }
+        })
+      });
+    }
+
     if (!upstream.ok || !upstream.body) {
-      res.write(`event: error\ndata: ${JSON.stringify(await upstream.text())}\n\n`);
+      const errTxt = await upstream.text().catch(() => String(upstream.status));
+      res.write(`event: error\ndata: ${JSON.stringify(errTxt)}\n\n`);
       return res.end();
     }
 
-    const reader = upstream.body.getReader();
+    // Read upstream NDJSON and convert to SSE tokens the UI expects
+    const reader = upstream.body.getReader ? upstream.body.getReader() : null;
     const decoder = new TextDecoder();
+    let finalText = '';
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value, { stream: true });
-      // Ollama streams NDJSON lines
-      for (const line of chunk.split('\n')) {
-        const t = line.trim();
-        if (!t) continue;
+    async function handleChunk(s) {
+      // Ollama sends NDJSON lines; each may contain {response:"…"} and eventually {done:true}
+      const lines = s.split('\n');
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line) continue;
         try {
-          const json = JSON.parse(t);
-          if (json.response) res.write(`data: ${JSON.stringify({ token: json.response })}\n\n`);
-          if (json.done) {
-            res.write('event: done\ndata: {}\n\n');
-            return res.end();
+          const j = JSON.parse(line);
+          if (typeof j.response === 'string' && j.response.length) {
+            finalText += j.response;
+            res.write(`data: ${JSON.stringify({ token: j.response })}\n\n`);
           }
-        } catch {/* ignore partials */}
-      }
-    }
-  } catch (err) {
-    console.error('[stream] error:', err);
-    res.write(`event: error\ndata: ${JSON.stringify(String(err))}\n\n`);
-    res.end();
-  }
-});
-
-/** Chat endpoint (kept) */
-app.post('/api/chat', async (req, res) => {
-  try {
-    const { messages, model, options } = req.body || {};
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: 'Missing messages' });
-    }
-    const usedModel = model || DEFAULT_MODEL;
-
-    const r = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: usedModel,
-        stream: false,
-        options: { temperature: 0.2, ...options },
-        messages
-      })
-    });
-    if (!r.ok) return res.status(502).json({ error: 'Ollama error', details: await r.text() });
-
-    const data = await r.json();
-    res.setHeader('X-Helix-Model', usedModel);
-    res.json({ message: data.message?.content || '', model: usedModel });
-  } catch (err) {
-    console.error('[chat] error:', err);
-    res.status(500).json({ error: 'Backend error', details: String(err) });
-  }
-});
-
-/** Pull with progress (unchanged) */
-app.post('/api/pull', async (req, res) => {
-  try {
-    const { name } = req.body || {};
-    if (!name || !name.trim()) { res.writeHead(400); return res.end('Missing model name'); }
-
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-
-    const upstream = await fetch(`${OLLAMA_URL}/api/pull`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, stream: true })
-    });
-
-    if (!upstream.ok || !upstream.body) {
-      res.write(`event: error\ndata: ${JSON.stringify(await upstream.text())}\n\n`);
-      return res.end();
-    }
-
-    const reader = upstream.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      for (const line of chunk.split('\n')) {
-        const t = line.trim();
-        if (!t) continue;
-        try {
-          const json = JSON.parse(t);
-          res.write(`data: ${JSON.stringify(json)}\n\n`);
-          if (json.completed) {
+          if (j.done) {
+            if (finalText) pushHistory(conversationId, { role: 'assistant', content: finalText });
             res.write('event: done\ndata: {}\n\n');
-            return res.end();
+            return true; // signal done
           }
-        } catch {}
+        } catch {
+          // non-JSON—still forward as plain text
+          res.write(`data: ${JSON.stringify(line)}\n\n`);
+        }
       }
+      return false;
     }
-  } catch (err) {
-    console.error('[pull] error:', err);
-    res.write(`event: error\ndata: ${JSON.stringify(String(err))}\n\n`);
-    res.end();
+
+    if (reader) {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        const finished = await handleChunk(chunk);
+        if (finished) break;
+      }
+    } else if (upstream.body && Symbol.asyncIterator in upstream.body) {
+      for await (const chunk of upstream.body) {
+        const str = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+        const finished = await handleChunk(str);
+        if (finished) break;
+      }
+    } else {
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      await handleChunk(buf.toString('utf8'));
+    }
+
+    try { res.end(); } catch {}
+  } catch (e) {
+    console.error('[stream] error:', e);
+    try {
+      res.write(`event: error\ndata: ${JSON.stringify(String(e))}\n\n`);
+      res.end();
+    } catch {}
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`[helix-backend] listening on http://127.0.0.1:${PORT}`);
+// --------------------------- Start -----------------------------
+app.listen(PORT, HOST, () => {
+  console.log(`[helix-backend] listening on http://${HOST}:${PORT}`);
 });

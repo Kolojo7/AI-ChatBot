@@ -8,7 +8,7 @@ import "./Helix.css";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://127.0.0.1:4000";
 
-/* ---------- Small UI bits ---------- */
+/* ---------------- Small UI bits ---------------- */
 function TypingDots() {
   return <span className="typing-dots"><span>.</span><span>.</span><span>.</span></span>;
 }
@@ -51,7 +51,7 @@ function renderRichContent(text) {
   return parts.length ? <>{parts}</> : <span>{text}</span>;
 }
 
-/* ---------- Model -> Visuals ---------- */
+/* ---------------- Model -> Visuals ---------------- */
 function parseModel(model = "") {
   const m = model.toLowerCase();
   const family =
@@ -70,10 +70,8 @@ function parseModel(model = "") {
 
   return { family, sizeB, tier };
 }
-
 function getModelVisual(model) {
   const { family, tier } = parseModel(model);
-
   const palettes = {
     code:   { a:"#50e3c2", b:"#d16ba5", ring:"#7dd6ff", glow:"rgba(80,227,194,.25)" },
     reason: { a:"#89a7ff", b:"#b3a1ff", ring:"#a8c1ff", glow:"rgba(137,167,255,.25)" },
@@ -82,16 +80,13 @@ function getModelVisual(model) {
     general:{ a:"#ff6fa1", b:"#ff3d71", ring:"#ff9fc0", glow:"rgba(255,63,113,.22)" },
   };
   const p = palettes[family] || palettes.general;
-
   const speeds = { light: 14, mid: 11, pro: 8, ultra: 6 };
   const speed = speeds[tier] || 12;
-
   const label = { light: "Light", mid: "Mid", pro: "Pro", ultra: "Ultra" }[tier];
-
   return { colors: p, speed, tierLabel: label };
 }
 
-/* ---------- Animated DNA Helix ---------- */
+/* ---------------- Animated DNA Helix ---------------- */
 function HelixCore({ spinning, colors, speed }) {
   const styleVars = {
     '--helixA': colors.a,
@@ -122,12 +117,92 @@ function HelixCore({ spinning, colors, speed }) {
     </div>
   );
 }
-
 function PowerBadge({ tierLabel }) {
   return <span className="helix-badge power">Power: <strong>{tierLabel}</strong></span>;
 }
 
-/* ---------- App ---------- */
+/* ---------------- Compact Memory Dock ---------------- */
+function CompactMemory({
+  facts,
+  onReloadFacts,
+  onSaveFact,
+  noteQ,
+  setNoteQ,
+  noteResults,
+  onSearchNotes,
+  onRemember
+}) {
+  const [open, setOpen] = useState(false);
+  const [factInline, setFactInline] = useState("");
+
+  return (
+    <div className={`mem-dock ${open ? "open" : ""}`}>
+      <div className="mem-row">
+        <button className="mem-pill" onClick={() => setOpen(o => !o)}>Memory</button>
+
+        {/* Quick fact: “key=value” */}
+        <input
+          className="mem-input"
+          placeholder='fact (e.g., name=Vedansh)'
+          value={factInline}
+          onChange={e => setFactInline(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { onSaveFact(factInline); setFactInline(""); } }}
+        />
+        <button className="mem-btn" onClick={() => { onSaveFact(factInline); setFactInline(""); }}>
+          Save
+        </button>
+
+        {/* Quick note */}
+        <button className="mem-btn" onClick={() => onRemember(prompt("Note to remember") || "")}>
+          Remember
+        </button>
+
+        {/* Quick search */}
+        <input
+          className="mem-input"
+          placeholder="search notes…"
+          value={noteQ}
+          onChange={e => { setNoteQ(e.target.value); onSearchNotes(e.target.value); }}
+        />
+        <button className="mem-btn" onClick={() => onSearchNotes(noteQ)}>Search</button>
+
+        <button className="mem-btn ghost" onClick={onReloadFacts} title="Reload facts">↻</button>
+      </div>
+
+      {open && (
+        <div className="mem-panel">
+          <div className="mem-section">
+            <strong>Facts</strong>
+            <div className="mem-chips">
+              {Object.keys(facts || {}).length === 0 ? (
+                <span className="mem-dim">(none)</span>
+              ) : (
+                Object.entries(facts).map(([k, v]) => (
+                  <span className="mem-chip" key={k}><code>{k}</code>: {String(v)}</span>
+                ))
+              )}
+            </div>
+          </div>
+
+          {noteResults?.length > 0 && (
+            <div className="mem-section">
+              <strong>Top notes</strong>
+              <ul className="mem-list">
+                {noteResults.map(r => (
+                  <li key={r.id}>
+                    {r.text} <small className="mem-dim">({r.score.toFixed(2)})</small>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- App ---------------- */
 export default function App() {
   const DEFAULT_GREETING = "Hello, I am Helix. How can I assist you with your code today?";
   const bottomRef = useRef(null);
@@ -139,7 +214,7 @@ export default function App() {
     localStorage.setItem("helix:theme", theme);
   }, [theme]);
 
-  // Descriptions for tooltip
+  // Descriptions
   const MODEL_INFO = useMemo(() => ({
     "deepseek-coder:33b": "Best for code generation, refactors, debugging.",
     "qwen2.5:14b-instruct": "Great for STEM, step-by-step reasoning.",
@@ -149,14 +224,13 @@ export default function App() {
     "llama3.1:70b": "High quality but hardware heavy."
   }), []);
 
-  // Installed models + errors
+  // Installed models
   const [installed, setInstalled] = useState([]);
   const [modelsErr, setModelsErr] = useState("");
   const [loadingModels, setLoadingModels] = useState(false);
 
-  // Selection + confirmed usage
   const savedModel = typeof window !== "undefined" ? localStorage.getItem("helix:model") : null;
-  const [model, setModel] = useState(savedModel || "deepseek-coder:33b");
+  const [model, setModel] = useState(savedModel || "qwen2.5:14b-instruct");
   const [confirmedModel, setConfirmedModel] = useState(null);
 
   // Chat state
@@ -165,7 +239,15 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
 
-  // Visuals derived from current model
+  // Memory state
+  const [facts, setFacts] = useState({});
+  const [factKey, setFactKey] = useState("");      // not used by dock, but safe if you keep old panel later
+  const [factValue, setFactValue] = useState("");
+  const [noteText, setNoteText] = useState("");
+  const [noteQ, setNoteQ] = useState("");
+  const [noteResults, setNoteResults] = useState([]);
+
+  const userId = "default";
   const visuals = useMemo(() => getModelVisual(model), [model]);
 
   useEffect(() => { localStorage.setItem("helix:model", model); }, [model]);
@@ -189,46 +271,156 @@ export default function App() {
   }
   useEffect(() => { refreshModels(); }, []);
 
-  const installedSet = new Set(installed.map(n => n.trim().toLowerCase()));
+  const installedSet = useMemo(
+    () => new Set(installed.map(n => n.trim().toLowerCase())),
+    [installed]
+  );
   const isInstalled = (name) => installedSet.has((name || "").trim().toLowerCase());
 
-  async function sendPrompt(prompt) {
+  /* -------- Memory API helpers -------- */
+  async function loadFacts() {
+    try {
+      const r = await fetch(`${API_BASE}/api/memory/facts?userId=${encodeURIComponent(userId)}`);
+      const j = await r.json();
+      if (j.ok) setFacts(j.facts || {});
+    } catch (e) { console.error("loadFacts error", e); }
+  }
+  useEffect(() => { loadFacts(); }, []);
+
+  async function saveFact() {
+    if (!factKey.trim()) return;
+    try {
+      const body = { userId, facts: { [factKey.trim()]: factValue } };
+      const r = await fetch(`${API_BASE}/api/memory/facts`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (j.ok) { setFacts(j.facts || {}); setFactKey(""); setFactValue(""); }
+    } catch (e) { console.error("saveFact error", e); }
+  }
+
+  async function rememberNote() {
+    if (!noteText.trim()) return;
+    try {
+      await fetch(`${API_BASE}/api/memory/remember`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, text: noteText.trim() }),
+      });
+      setNoteText("");
+    } catch (e) { console.error("rememberNote error", e); }
+  }
+
+  async function searchNotes(q) {
+    try {
+      const r = await fetch(`${API_BASE}/api/memory/search?userId=${encodeURIComponent(userId)}&q=${encodeURIComponent(q)}&k=4`);
+      const j = await r.json();
+      if (j.ok) setNoteResults(j.results || []);
+    } catch (e) { console.error("searchNotes error", e); }
+  }
+
+  async function clearChatMemory() {
+    try {
+      await fetch(`${API_BASE}/api/memory/clear`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ what: "chat", conversationId: "default" }),
+      });
+    } catch (e) { console.error("clearChatMemory error", e); }
+  }
+
+  // One-click remember from a user bubble
+  async function rememberNoteFromText(text) {
+    const t = String(text || "").trim();
+    if (!t) return;
+    try {
+      await fetch(`${API_BASE}/api/memory/remember`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: "default", text: t })
+      });
+    } catch (e) { console.error(e); }
+  }
+
+  // Quick: parse "key=value" or "key value"
+  async function saveFactQuick(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return;
+    let k = "", v = "";
+    if (s.includes("=")) [k, v] = s.split("=").map(x => x.trim());
+    else {
+      const parts = s.split(/\s+/);
+      k = parts.shift(); v = parts.join(" ");
+    }
+    if (!k) return;
+    try {
+      const body = { userId: "default", facts: { [k]: v } };
+      const r = await fetch(`${API_BASE}/api/memory/facts`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      if (j.ok) setFacts(j.facts || {});
+    } catch (e) { console.error(e); }
+  }
+
+  // Debounced search
+  function debounce(fn, ms = 250) {
+    let id; return (...args) => { clearTimeout(id); id = setTimeout(() => fn(...args), ms); };
+  }
+  const searchNotesDebounced = useMemo(
+    () => debounce((q) => { setNoteQ(q); searchNotes(q); }, 250),
+    [] // eslint-disable-line
+  );
+
+  // ---------- Chat send (stream-first, fallback) ----------
+  async function sendPrompt(userPrompt) {
     setLoading(true);
     setConfirmedModel(null);
-    setMessages((prev) => [...prev, { type: "user", content: prompt }, { type: "ai", content: "" }]);
+    setMessages((prev) => [...prev, { type: "user", content: userPrompt }, { type: "ai", content: "" }]);
 
     try {
       const res = await fetch(`${API_BASE}/api/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, model })
+        body: JSON.stringify({ message: userPrompt, model })
       });
 
       if (!res.ok || !res.body) {
         const nr = await fetch(`${API_BASE}/api/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, model })
+          body: JSON.stringify({ prompt: userPrompt, model })
         });
         const nd = await nr.json();
-        if (nd.model) setConfirmedModel(nd.model);
-        setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: nd.response || "(no response)" }; return c; });
+        if (nd?.data?.model) setConfirmedModel(nd.data.model);
+        const reply = nd?.data?.response || nd?.data?.message || "(no response)";
+        setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: reply }; return c; });
       } else {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let aiText = "";
+        let buf = "";
+
+        const putAI = (s) => {
+          aiText += s;
+          setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: aiText }; return c; });
+        };
 
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
+          buf += decoder.decode(value, { stream: true });
 
-          for (const raw of chunk.split("\n\n")) {
-            const line = raw.trim();
-            if (!line) continue;
+          const frames = buf.split("\n\n");
+          buf = frames.pop();
 
-            if (line.startsWith("event: meta")) {
-              const dataLine = raw.split("\n").find(l => l.startsWith("data:"));
+          for (const frame of frames) {
+            const lines = frame.split("\n");
+            const first = (lines[0] || "").trim();
+
+            if (first.startsWith("event: meta")) {
+              const dataLine = lines.find(l => l.startsWith("data:"));
               if (dataLine) {
                 try {
                   const meta = JSON.parse(dataLine.slice(5));
@@ -237,15 +429,24 @@ export default function App() {
               }
               continue;
             }
+            if (first.startsWith("event: error")) {
+              const dataLine = lines.find(l => l.startsWith("data:"));
+              const msg = dataLine ? dataLine.slice(5).trim() : "Unknown stream error";
+              putAI(`\n[error] ${msg}`);
+              continue;
+            }
+            if (first.startsWith("event: done")) {
+              continue;
+            }
 
-            if (line.startsWith("data:")) {
+            for (const l of lines) {
+              if (!l.startsWith("data:")) continue;
+              const payload = l.slice(5).trim();
               try {
-                const payload = JSON.parse(line.slice(5));
-                if (payload.token) {
-                  aiText += payload.token;
-                  setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: aiText }; return c; });
-                }
+                const json = JSON.parse(payload);
+                if (json && typeof json.token === "string") { putAI(json.token); continue; }
               } catch {}
+              if (payload) putAI(payload);
             }
           }
         }
@@ -257,29 +458,22 @@ export default function App() {
     }
   }
 
-  //code for handeling mic click events
-   const handleMicClick = async () => {
-    if (listening) {
-      setListening(false);
-      return;
-    }
+  // mic (optional)
+  const handleMicClick = async () => {
+    if (listening) { setListening(false); return; }
     setListening(true);
     try {
       const res = await fetch("http://localhost:8000/transcribe", { method: "POST" });
       const data = await res.json();
-      if (data.text) {
-        setInput(prev => (prev ? prev + " " + data.text : data.text));
-      }
-    } catch (err) {
-      console.error(err);
-    }
+      if (data.text) setInput(prev => (prev ? prev + " " + data.text : data.text));
+    } catch (err) { console.error(err); }
     setListening(false);
   };
 
   const handleSend = (e) => { e.preventDefault(); if (!input.trim()) return; sendPrompt(input.trim()); setInput(""); };
-  const currentPurpose = MODEL_INFO[model] || "Local Ollama model";
+  const currentPurpose = (useMemo(() => MODEL_INFO[model], [MODEL_INFO, model])) || "Local Ollama model";
 
-  /* ----- Suggestions failsafe + ensure current option ----- */
+  // suggestions
   const DEFAULT_SUGGESTIONS = [
     "deepseek-coder:33b",
     "qwen2.5:14b-instruct",
@@ -288,13 +482,12 @@ export default function App() {
     "gemma:7b-instruct",
     "llama3.1:70b"
   ];
-
   const suggestedFromInfo = Object.keys(MODEL_INFO || {});
   let suggestionModels = suggestedFromInfo.length ? suggestedFromInfo : DEFAULT_SUGGESTIONS;
   suggestionModels = suggestionModels.filter(m => !installedSet.has(m.trim().toLowerCase()));
-
-  const ensureCurrentModelOption = !isInstalled(model)
-    && !suggestionModels.map(s => s.toLowerCase()).includes((model || "").toLowerCase());
+  const ensureCurrentModelOption =
+    !isInstalled(model) &&
+    !suggestionModels.map(s => s.toLowerCase()).includes((model || "").toLowerCase());
 
   return (
     <div className={`helix-root ${loading ? "is-thinking" : ""}`}>
@@ -382,6 +575,17 @@ export default function App() {
             <div key={idx} className={`helix-msg ${msg.type}`}>
               <div className={`helix-msg-bubble ${msg.type}`}>
                 {renderRichContent(msg.content)}
+                {msg.type === "user" && (
+                  <div className="helix-bubble-actions">
+                    <button
+                      className="helix-chip"
+                      title="Remember this as a note"
+                      onClick={() => rememberNoteFromText(msg.content)}
+                    >
+                      Remember
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -394,7 +598,20 @@ export default function App() {
           )}
           <div ref={bottomRef} />
         </div>
-        {/* Input area */}
+
+        {/* Minimal Memory Dock */}
+        <CompactMemory
+          facts={facts}
+          onReloadFacts={loadFacts}
+          onSaveFact={saveFactQuick}
+          noteQ={noteQ}
+          setNoteQ={setNoteQ}
+          noteResults={noteResults}
+          onSearchNotes={searchNotesDebounced}
+          onRemember={async (t) => { if (t) await rememberNoteFromText(t); }}
+        />
+
+        {/* Input */}
         <form className="helix-input-row" onSubmit={handleSend}>
           <div className="helix-input-wrapper">
             <input
