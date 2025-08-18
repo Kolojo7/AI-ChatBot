@@ -1,389 +1,359 @@
 // server/server.js
-// Helix backend with memory + robust SSE streaming for Ollama
+import express from "express";
+import cors from "cors";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { randomUUID } from 'crypto';
-
-// --- Web Streams polyfill (helps Node 16/17 use undici cleanly)
-import { ReadableStream, WritableStream, TransformStream } from 'stream/web';
-globalThis.ReadableStream = globalThis.ReadableStream || ReadableStream;
-globalThis.WritableStream = globalThis.WritableStream || WritableStream;
-globalThis.TransformStream = globalThis.TransformStream || TransformStream;
-
-// --- Fetch from undici (stable for Node 16–20)
-import { fetch, Headers, Request, Response } from 'undici';
-globalThis.fetch = fetch;
-globalThis.Headers = Headers;
-globalThis.Request = Request;
-globalThis.Response = Response;
-
-// ---------------------------- Config ----------------------------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 4000);
-const HOST = process.env.HOST || '127.0.0.1';
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+/* ---------------- persistence ---------------- */
+const DATA_DIR = path.join(__dirname, "data");
+const CHAT_FILE = path.join(DATA_DIR, "chat_memory.json");
+const FACTS_FILE = path.join(DATA_DIR, "facts_memory.json");
 
-// ---------------------------- App ------------------------------
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(CHAT_FILE)) fs.writeFileSync(CHAT_FILE, JSON.stringify({}), "utf-8");
+if (!fs.existsSync(FACTS_FILE)) {
+  fs.writeFileSync(FACTS_FILE, JSON.stringify({}), "utf-8");
+}
+
+let chatMemory = JSON.parse(fs.readFileSync(CHAT_FILE, "utf-8"));
+let factsMemory = JSON.parse(fs.readFileSync(FACTS_FILE, "utf-8"));
+
+function saveSoon() {
+  clearTimeout(saveSoon._id);
+  saveSoon._id = setTimeout(() => {
+    fs.writeFileSync(CHAT_FILE, JSON.stringify(chatMemory, null, 2));
+    fs.writeFileSync(FACTS_FILE, JSON.stringify(factsMemory, null, 2));
+  }, 250);
+}
+
+const pick = (o, k, d) => (o && k in o ? o[k] : d);
+const normKey = (s) =>
+  String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+/* Ensure per-user structure: { user: {...}, ai: {...} } */
+function ensureFacts(userId = "default") {
+  if (!factsMemory[userId]) {
+    factsMemory[userId] = {
+      user: {},
+      ai: { name: "Helix", role: "local coding assistant" }, // Helix self-identity (read-only)
+    };
+  } else {
+    const f = factsMemory[userId];
+    if (!f.user) f.user = {};
+    if (!f.ai) f.ai = { name: "Helix", role: "local coding assistant" };
+  }
+  return factsMemory[userId];
+}
+
+function getFacts(userId = "default") {
+  return ensureFacts(userId);
+}
+
+function upsertUserFacts(userId = "default", kv = {}) {
+  const facts = ensureFacts(userId);
+  for (const [k, v] of Object.entries(kv)) {
+    const key = normKey(k);
+    const val = typeof v === "string" ? v.trim() : v;
+    if (!key || val === undefined || val === null || val === "") continue;
+    facts.user[key] = val;
+  }
+  saveSoon();
+}
+
+function deleteUserFact(userId = "default", key) {
+  const f = ensureFacts(userId);
+  const k = normKey(key);
+  if (!k || !(k in f.user)) return false;
+  delete f.user[k];
+  saveSoon();
+  return true;
+}
+
+function clearUserFacts(userId = "default") {
+  const f = ensureFacts(userId);
+  f.user = {};
+  saveSoon();
+}
+
+/* simple pattern-based extraction → only user facts */
+function extractUserFacts(text = "") {
+  const t = " " + String(text).trim() + " ";
+  const out = {};
+  let m;
+
+  if ((m = t.match(/\b(?:my name is|call me|i am)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,2})\b/i))) {
+    out.name = m[1].trim();
+  }
+  if ((m = t.match(/\b([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/i))) {
+    out.email = m[1].trim();
+  }
+  if ((m = t.match(/\bfav(?:ou)?rite color(?: is|:)?\s+([a-z]+)\b/i))) {
+    out.favorite_color = m[1].trim();
+  }
+  if ((m = t.match(/\bfav(?:ou)?rite (?:language|lang)(?: is|:)?\s+([A-Za-z+#.\- ]+)\b/i))) {
+    out.favorite_language = m[1].trim();
+  }
+  if ((m = t.match(/\b(?:i code in|i use|i write in)\s+([A-Za-z+#.\- ]+)\b/i))) {
+    out.primary_stack = m[1].trim();
+  }
+  if ((m = t.match(/\b(?:i live in|i'm in|i am in)\s+([A-Za-z ]{3,})\b/i))) {
+    out.location = m[1].trim();
+  }
+  if ((m = t.match(/\b(?:timezone|time zone)(?: is|:)?\s*([A-Za-z/_+\-0-9]+)\b/i))) {
+    out.timezone = m[1].trim();
+  }
+  return out;
+}
+
+/* ---------------- server ---------------- */
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: "1mb" }));
 
-// --- Memory UI state ---
-const [facts, setFacts] = useState({});
-const [factKey, setFactKey] = useState("");
-const [factValue, setFactValue] = useState("");
+const OLLAMA = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 
-const [noteText, setNoteText] = useState("");
-const [noteQ, setNoteQ] = useState("");
-const [noteResults, setNoteResults] = useState([]);
-
-// You can change this if you later add real users:
-const userId = "default";
-
-// --- Memory API helpers ---
-async function loadFacts() {
-  try {
-    const r = await fetch(`${API_BASE}/api/memory/facts?userId=${encodeURIComponent(userId)}`);
-    const j = await r.json();
-    if (j.ok) setFacts(j.facts || {});
-  } catch (e) {
-    console.error("loadFacts error", e);
-  }
+async function ollamaJSON(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`ollama: ${r.status}`);
+  return await r.json();
+}
+async function ollamaStream(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`ollama: ${r.status}`);
+  return r;
 }
 
-async function saveFact() {
-  if (!factKey.trim()) return;
-  try {
-    const body = { userId, facts: { [factKey.trim()]: factValue } };
-    const r = await fetch(`${API_BASE}/api/memory/facts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const j = await r.json();
-    if (j.ok) {
-      setFacts(j.facts || {});
-      setFactKey("");
-      setFactValue("");
-    }
-  } catch (e) {
-    console.error("saveFact error", e);
-  }
-}
-
-async function rememberNote() {
-  if (!noteText.trim()) return;
-  try {
-    const r = await fetch(`${API_BASE}/api/memory/remember`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, text: noteText.trim() }),
-    });
-    await r.json(); // We don't need the id here
-    setNoteText("");
-  } catch (e) {
-    console.error("rememberNote error", e);
-  }
-}
-
-async function searchNotes() {
-  try {
-    const r = await fetch(`${API_BASE}/api/memory/search?userId=${encodeURIComponent(userId)}&q=${encodeURIComponent(noteQ)}&k=4`);
-    const j = await r.json();
-    if (j.ok) setNoteResults(j.results || []);
-  } catch (e) {
-    console.error("searchNotes error", e);
-  }
-}
-
-async function clearChatMemory() {
-  try {
-    await fetch(`${API_BASE}/api/memory/clear`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ what: "chat", conversationId: "default" }),
-    });
-  } catch (e) {
-    console.error("clearChatMemory error", e);
-  }
-}
-
-// ------------------------ Health & Models -----------------------
-app.get('/api/health', async (req, res) => {
-  try {
-    const r = await fetch(`${OLLAMA_URL}/api/tags`);
-    if (!r.ok) throw new Error(`ollama ${r.status}`);
-    const j = await r.json();
-    const first = (j.models && j.models[0] && j.models[0].name) || null;
-    res.json({ ok: true, model: first, ollama: OLLAMA_URL });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
-  }
+/* health/models */
+app.get("/api/health", async (_, res) => {
+  res.json({ ok: true, model: "gemma:7b-instruct", ollama: OLLAMA });
 });
-
-app.get('/api/models', async (req, res) => {
+app.get("/api/models", async (_, res) => {
   try {
-    const r = await fetch(`${OLLAMA_URL}/api/tags`);
-    if (!r.ok) throw new Error(`ollama ${r.status}`);
+    const r = await fetch(`${OLLAMA}/api/tags`);
     const j = await r.json();
-    const models = Array.isArray(j.models) ? j.models.map(m => m.name) : [];
+    const models = Array.isArray(j.models) ? j.models.map((m) => m.name) : [];
     res.json({ ok: true, models });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
+    res.json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// ------------------------- Memory APIs -------------------------
-app.post('/api/memory/facts', (req, res) => {
-  const { userId = 'default', facts = {} } = req.body || {};
-  const prev = profileFacts.get(userId) || {};
-  const next = { ...prev, ...facts };
-  profileFacts.set(userId, next);
-  res.json({ ok: true, facts: next });
-});
-app.get('/api/memory/facts', (req, res) => {
-  const userId = req.query.userId || 'default';
-  res.json({ ok: true, facts: profileFacts.get(userId) || {} });
-});
-app.post('/api/memory/remember', async (req, res) => {
-  const { userId = 'default', text } = req.body || {};
-  if (!text) return res.status(400).json({ ok: false, error: 'text required' });
-  try {
-    const emb = await embedText(text);
-    const item = { id: randomUUID(), userId, text, embedding: emb, ts: Date.now() };
-    vectorMemory.push(item);
-    res.json({ ok: true, id: item.id });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
-  }
-});
-app.get('/api/memory/search', async (req, res) => {
-  const { userId = 'default', q = '', k = 4 } = req.query || {};
-  try {
-    const hits = await searchSemantic(userId, q, Number(k));
-    res.json({ ok: true, results: hits.map(h => ({ id: h.id, text: h.text, score: h.score })) });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e) });
-  }
-});
-app.post('/api/memory/clear', (req, res) => {
-  const { conversationId, userId = 'default', what = 'chat' } = req.body || {};
-  if (what === 'chat' && conversationId) chatMemory.delete(conversationId);
-  if (what === 'facts') profileFacts.set(userId, {});
-  if (what === 'semantic') vectorMemory = vectorMemory.filter(v => v.userId !== userId);
-  res.json({ ok: true });
+/* memory APIs (segregated) */
+app.get("/api/memory/facts", (req, res) => {
+  const userId = req.query.userId || "default";
+  res.json({ ok: true, facts: getFacts(userId) });
 });
 
-// -------------------- SSE helpers ------------------
-function setSSEHeaders(res) {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
+app.post("/api/memory/facts", (req, res) => {
+  const userId = pick(req.body, "userId", "default");
+  const facts = pick(req.body, "facts", {});
+  upsertUserFacts(userId, facts);
+  res.json({ ok: true, facts: getFacts(userId) });
+});
+
+app.delete("/api/memory/facts", (req, res) => {
+  const userId = pick(req.body, "userId", "default");
+  const bucket = pick(req.body, "bucket", "user"); // user | ai (ai deletion is disabled by default)
+  const all = !!pick(req.body, "all", false);
+  const key = pick(req.body, "key");
+
+  if (bucket !== "user") {
+    return res.json({ ok: false, error: "Only user bucket can be modified." });
+  }
+  if (all) {
+    clearUserFacts(userId);
+    return res.json({ ok: true, facts: getFacts(userId) });
+  }
+  if (!key) return res.json({ ok: false, error: "Provide 'key' or set 'all:true'." });
+  const ok = deleteUserFact(userId, key);
+  if (!ok) return res.json({ ok: false, error: "Key not found." });
+  return res.json({ ok: true, facts: getFacts(userId) });
+});
+
+/* chat history helpers */
+function pushTurn(cid = "default", role, content) {
+  if (!chatMemory[cid]) chatMemory[cid] = [];
+  chatMemory[cid].push({ role, content, ts: Date.now() });
+  if (chatMemory[cid].length > 40) chatMemory[cid] = chatMemory[cid].slice(-40);
+  saveSoon();
+}
+function lastTurns(cid = "default", n = 10) {
+  const arr = chatMemory[cid] || [];
+  return arr.slice(-n);
 }
 
-// ------------------- Non-stream (JSON) -------------------
-app.post('/api/generate', async (req, res) => {
+/* non-stream */
+app.post("/api/generate", async (req, res) => {
   try {
-    let {
-      prompt = '',
-      model = 'llama3.1:8b',
-      options = {},
-      system = '',
-      conversationId = 'default',
-      userId = 'default'
-    } = req.body || {};
+    const model = pick(req.body, "model", "gemma:7b-instruct");
+    const prompt = pick(req.body, "prompt", "");
+    const userId = "default";
+    const cid = "default";
 
-    const hist = getHistory(conversationId, 8);
-    const facts = profileFacts.get(userId) || {};
-    const sem = await searchSemantic(userId, prompt, 4);
+    // auto-extract to USER bucket
+    const auto = extractUserFacts(prompt);
+    if (Object.keys(auto).length) upsertUserFacts(userId, auto);
 
-    const preamble = [
-      system || 'You are Helix, a helpful local coding assistant.',
-      factsPreamble(facts),
-      semPreamble(sem),
-      'When answering, you may refer back to these facts/notes.'
-    ].filter(Boolean).join('\n\n');
+    pushTurn(cid, "user", prompt);
+    const history = lastTurns(cid, 8)
+      .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+      .join("\n");
 
-    const fullPrompt =
-      `${preamble}\n\n### Conversation Snippets\n` +
-      `${hist.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n')}\n\n` +
-      `### User\n${prompt}`;
+    const facts = getFacts(userId);
+    const userBlob = Object.keys(facts.user).length
+      ? "USER FACTS (about the HUMAN):\n" +
+        Object.entries(facts.user)
+          .map(([k, v]) => `- ${k}: ${v}`)
+          .join("\n") +
+        "\n\n"
+      : "";
+    const aiBlob =
+      "ASSISTANT FACTS (about YOU, the AI):\n" +
+      Object.entries(facts.ai)
+        .map(([k, v]) => `- ${k}: ${v}`)
+        .join("\n") +
+      "\n\n";
 
-    pushHistory(conversationId, { role: 'user', content: prompt });
+    const system = `You are Helix, a local coding assistant.
+CRITICAL IDENTITY RULES:
+- USER FACTS describe the HUMAN. Refer to them in second-person ("you").
+- ASSISTANT FACTS describe YOU, Helix. Refer to yourself as "I".
+- NEVER claim USER facts as your own and NEVER state assistant facts as the user's.`;
 
-    const upstream = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        prompt: fullPrompt,
-        options,
-        stream: false
-      })
+    const fullPrompt = `${system}\n${userBlob}${aiBlob}${history}\nUSER: ${prompt}\nASSISTANT:`;
+
+    const j = await ollamaJSON(`${OLLAMA}/api/generate`, {
+      model,
+      prompt: fullPrompt,
+      stream: false,
     });
-
-    const text = await upstream.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
-    const reply = data.response || data.message || text;
-    if (reply) pushHistory(conversationId, { role: 'assistant', content: reply });
-
-    res.json({ ok: true, data });
+    const reply = j?.response || "(no response)";
+    pushTurn(cid, "assistant", reply);
+    res.json({ ok: true, data: { model, response: reply } });
   } catch (e) {
-    console.error('[generate] error:', e);
-    res.status(500).json({ ok: false, error: String(e) });
+    res.json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// ------------------- Stream (SSE) -------------------
-app.post('/api/stream', async (req, res) => {
+/* stream */
+app.post("/api/stream", async (req, res) => {
   try {
-    let {
-      // accept either "message" or "prompt" from client
-      message = '',
-      prompt = '',
-      messages = null,
-      system = '',
-      model = 'llama3.1:8b',
-      temperature,
-      options = {},
-      conversationId = 'default',
-      userId = 'default'
-    } = req.body || {};
-    if (!message && prompt) message = prompt;
+    const model = pick(req.body, "model", "gemma:7b-instruct");
+    const message = pick(req.body, "message", "");
+    const userId = "default";
+    const cid = "default";
 
-    setSSEHeaders(res);
-    const usedModel = model;
+    const auto = extractUserFacts(message);
+    if (Object.keys(auto).length) upsertUserFacts(userId, auto);
 
-    // Build memory context
-    const hist = getHistory(conversationId, 16);
-    const facts = profileFacts.get(userId) || {};
-    const queryForSem = message || (Array.isArray(messages) ? (messages[messages.length - 1]?.content || '') : '');
-    const sem = await searchSemantic(userId, queryForSem, 4);
+    pushTurn(cid, "user", message);
+    const history = lastTurns(cid, 8)
+      .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+      .join("\n");
 
-    const preamble = [
-      system || 'You are Helix, a helpful local coding assistant.',
-      factsPreamble(facts),
-      semPreamble(sem),
-      'When answering, you may refer back to these facts/notes.'
-    ].filter(Boolean).join('\n\n');
+    const facts = getFacts(userId);
+    const userBlob = Object.keys(facts.user).length
+      ? "USER FACTS (about the HUMAN):\n" +
+        Object.entries(facts.user)
+          .map(([k, v]) => `- ${k}: ${v}`)
+          .join("\n") +
+        "\n\n"
+      : "";
+    const aiBlob =
+      "ASSISTANT FACTS (about YOU, the AI):\n" +
+      Object.entries(facts.ai)
+        .map(([k, v]) => `- ${k}: ${v}`)
+        .join("\n") +
+      "\n\n";
 
-    // let the UI know which model is actually used
-    res.write(`event: meta\ndata: ${JSON.stringify({ model: usedModel })}\n\n`);
+    const system = `You are Helix, a local coding assistant.
+CRITICAL IDENTITY RULES:
+- USER FACTS describe the HUMAN. Use second-person ("you").
+- ASSISTANT FACTS describe YOU. Use first-person ("I") for these.
+- Do not conflate the two.`;
 
-    // Decide chat vs prompt
-    let upstream;
-    if (Array.isArray(messages)) {
-      const withSys = [{ role: 'system', content: preamble }, ...hist, ...messages];
-      upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: usedModel,
-          messages: withSys,
-          stream: true,
-          options: {
-            ...(temperature != null ? { temperature } : {}),
-            ...options
-          }
-        })
-      });
-    } else {
-      pushHistory(conversationId, { role: 'user', content: message });
-      const fullPrompt =
-        `${preamble}\n\n### Conversation Snippets\n` +
-        `${hist.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n')}\n\n` +
-        `### User\n${message}`;
+    const fullPrompt = `${system}\n${userBlob}${aiBlob}${history}\nUSER: ${message}\nASSISTANT:`;
 
-      upstream = await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: usedModel,
-          prompt: fullPrompt,
-          stream: true,
-          options: {
-            ...(temperature != null ? { temperature } : {}),
-            ...options
-          }
-        })
-      });
-    }
+    const upstream = await ollamaStream(`${OLLAMA}/api/generate`, {
+      model,
+      prompt: fullPrompt,
+      stream: true,
+    });
 
-    if (!upstream.ok || !upstream.body) {
-      const errTxt = await upstream.text().catch(() => String(upstream.status));
-      res.write(`event: error\ndata: ${JSON.stringify(errTxt)}\n\n`);
-      return res.end();
-    }
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
 
-    // Read upstream NDJSON and convert to SSE tokens the UI expects
-    const reader = upstream.body.getReader ? upstream.body.getReader() : null;
+    res.write(`event: meta\ndata: ${JSON.stringify({ model })}\n\n`);
+
+    const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
-    let finalText = '';
+    let acc = "";
 
-    async function handleChunk(s) {
-      // Ollama sends NDJSON lines; each may contain {response:"…"} and eventually {done:true}
-      const lines = s.split('\n');
-      for (const raw of lines) {
-        const line = raw.trim();
-        if (!line) continue;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split("\n").filter(Boolean);
+      for (const ln of lines) {
         try {
-          const j = JSON.parse(line);
-          if (typeof j.response === 'string' && j.response.length) {
-            finalText += j.response;
+          const j = JSON.parse(ln);
+          if (j.response) {
+            acc += j.response;
             res.write(`data: ${JSON.stringify({ token: j.response })}\n\n`);
           }
           if (j.done) {
-            if (finalText) pushHistory(conversationId, { role: 'assistant', content: finalText });
-            res.write('event: done\ndata: {}\n\n');
-            return true; // signal done
+            pushTurn(cid, "assistant", acc || "(no response)");
+            res.write("event: done\ndata: ok\n\n");
           }
         } catch {
-          // non-JSON—still forward as plain text
-          res.write(`data: ${JSON.stringify(line)}\n\n`);
+          acc += ln;
+          res.write(`data: ${JSON.stringify({ token: ln })}\n\n`);
         }
       }
-      return false;
     }
-
-    if (reader) {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        const finished = await handleChunk(chunk);
-        if (finished) break;
-      }
-    } else if (upstream.body && Symbol.asyncIterator in upstream.body) {
-      for await (const chunk of upstream.body) {
-        const str = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
-        const finished = await handleChunk(str);
-        if (finished) break;
-      }
-    } else {
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      await handleChunk(buf.toString('utf8'));
-    }
-
-    try { res.end(); } catch {}
+    res.end();
   } catch (e) {
-    console.error('[stream] error:', e);
-    try {
-      res.write(`event: error\ndata: ${JSON.stringify(String(e))}\n\n`);
-      res.end();
-    } catch {}
+    res.write(`event: error\ndata: ${JSON.stringify(String(e?.message || e))}\n\n`);
+    res.end();
   }
 });
 
-// --------------------------- Start -----------------------------
-app.listen(PORT, HOST, () => {
-  console.log(`[helix-backend] listening on http://${HOST}:${PORT}`);
+/* misc clears (chat vs facts) */
+app.post("/api/memory/clear", (req, res) => {
+  const what = pick(req.body, "what");
+  if (what === "chat") {
+    const cid = pick(req.body, "conversationId", "default");
+    delete chatMemory[cid];
+    saveSoon();
+    return res.json({ ok: true });
+  }
+  if (what === "facts") {
+    const userId = pick(req.body, "userId", "default");
+    clearUserFacts(userId);
+    return res.json({ ok: true });
+  }
+  res.json({ ok: false, error: "unknown 'what'" });
+});
+
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
+  console.log(`[helix-backend] listening on http://127.0.0.1:${PORT}`);
 });

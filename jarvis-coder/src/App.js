@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
-  FaMicrophone, FaRobot, FaCode, FaCopy, FaChevronDown, FaChevronUp, FaSync, FaMoon, FaSun
+  FaMicrophone, FaRobot, FaCode, FaCopy, FaChevronDown, FaChevronUp, FaSync, FaMoon, FaSun, FaTimes
 } from "react-icons/fa";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -8,7 +8,7 @@ import "./Helix.css";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://127.0.0.1:4000";
 
-/* ---------------- Small UI bits ---------------- */
+/* ---------- UI bits ---------- */
 function TypingDots() {
   return <span className="typing-dots"><span>.</span><span>.</span><span>.</span></span>;
 }
@@ -51,7 +51,7 @@ function renderRichContent(text) {
   return parts.length ? <>{parts}</> : <span>{text}</span>;
 }
 
-/* ---------------- Model -> Visuals ---------------- */
+/* ---------- Model visuals ---------- */
 function parseModel(model = "") {
   const m = model.toLowerCase();
   const family =
@@ -62,7 +62,7 @@ function parseModel(model = "") {
     m.includes("llama")    ? "general" : "general";
 
   const sizeMatch = m.match(/(\d+)\s*b/);
-  const sizeB = sizeMatch ? Number(sizeMatch[1]) : 7; // default 7B
+  const sizeB = sizeMatch ? Number(sizeMatch[1]) : 7;
   let tier = "light";
   if (sizeB > 8 && sizeB <= 15) tier = "mid";
   else if (sizeB > 15 && sizeB <= 33) tier = "pro";
@@ -86,7 +86,7 @@ function getModelVisual(model) {
   return { colors: p, speed, tierLabel: label };
 }
 
-/* ---------------- Animated DNA Helix ---------------- */
+/* ---------- Helix animation ---------- */
 function HelixCore({ spinning, colors, speed }) {
   const styleVars = {
     '--helixA': colors.a,
@@ -121,88 +121,71 @@ function PowerBadge({ tierLabel }) {
   return <span className="helix-badge power">Power: <strong>{tierLabel}</strong></span>;
 }
 
-/* ---------------- Compact Memory Dock ---------------- */
-function CompactMemory({
-  facts,
-  onReloadFacts,
-  onSaveFact,
-  noteQ,
-  setNoteQ,
-  noteResults,
-  onSearchNotes,
-  onRemember
-}) {
+/* ---------- Facts Dock (segregated) ---------- */
+function FactsDock({ facts, onReloadFacts, onSaveUserFact, onDeleteUserFact, onClearUserFacts }) {
   const [open, setOpen] = useState(false);
-  const [factInline, setFactInline] = useState("");
+  const [draft, setDraft] = useState("");
+  const userFacts = facts?.user || {};
+  const aiFacts = facts?.ai || {};
+  const hasUser = Object.keys(userFacts).length > 0;
 
   return (
     <div className={`mem-dock ${open ? "open" : ""}`}>
       <div className="mem-row">
         <button className="mem-pill" onClick={() => setOpen(o => !o)}>Memory</button>
-
-        {/* Quick fact: “key=value” */}
         <input
           className="mem-input"
-          placeholder='fact (e.g., name=Vedansh)'
-          value={factInline}
-          onChange={e => setFactInline(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { onSaveFact(factInline); setFactInline(""); } }}
+          placeholder='user fact (e.g., name=Vedansh)'
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { onSaveUserFact(draft); setDraft(""); } }}
         />
-        <button className="mem-btn" onClick={() => { onSaveFact(factInline); setFactInline(""); }}>
-          Save
-        </button>
-
-        {/* Quick note */}
-        <button className="mem-btn" onClick={() => onRemember(prompt("Note to remember") || "")}>
-          Remember
-        </button>
-
-        {/* Quick search */}
-        <input
-          className="mem-input"
-          placeholder="search notes…"
-          value={noteQ}
-          onChange={e => { setNoteQ(e.target.value); onSearchNotes(e.target.value); }}
-        />
-        <button className="mem-btn" onClick={() => onSearchNotes(noteQ)}>Search</button>
-
+        <button className="mem-btn" onClick={() => { onSaveUserFact(draft); setDraft(""); }}>Save</button>
         <button className="mem-btn ghost" onClick={onReloadFacts} title="Reload facts">↻</button>
+        <button
+          className="mem-btn"
+          onClick={() => { if (hasUser && window.confirm("Delete ALL user facts?")) onClearUserFacts(); }}
+          title="Delete all user facts"
+          disabled={!hasUser}
+          style={{ background: hasUser ? "rgba(255,80,80,.2)" : "rgba(255,255,255,.08)" }}
+        >
+          Clear User Facts
+        </button>
       </div>
 
       {open && (
         <div className="mem-panel">
           <div className="mem-section">
-            <strong>Facts</strong>
+            <strong>User Facts</strong>
             <div className="mem-chips">
-              {Object.keys(facts || {}).length === 0 ? (
-                <span className="mem-dim">(none)</span>
-              ) : (
-                Object.entries(facts).map(([k, v]) => (
-                  <span className="mem-chip" key={k}><code>{k}</code>: {String(v)}</span>
+              {hasUser ? (
+                Object.entries(userFacts).map(([k, v]) => (
+                  <span className="mem-chip" key={k}>
+                    <code>{k}</code>: {String(v)}
+                    <button className="mem-chip-x" onClick={() => onDeleteUserFact(k)} title={`Delete ${k}`}><FaTimes/></button>
+                  </span>
                 ))
+              ) : (
+                <span className="mem-dim">(none yet — say “my name is …”, or save above)</span>
               )}
             </div>
           </div>
 
-          {noteResults?.length > 0 && (
-            <div className="mem-section">
-              <strong>Top notes</strong>
-              <ul className="mem-list">
-                {noteResults.map(r => (
-                  <li key={r.id}>
-                    {r.text} <small className="mem-dim">({r.score.toFixed(2)})</small>
-                  </li>
-                ))}
-              </ul>
+          <div className="mem-section">
+            <strong>Assistant Facts</strong> <span className="mem-dim">(read-only)</span>
+            <div className="mem-chips">
+              {Object.entries(aiFacts).map(([k, v]) => (
+                <span className="mem-chip" key={k}><code>{k}</code>: {String(v)}</span>
+              ))}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-/* ---------------- App ---------------- */
+/* ---------- App ---------- */
 export default function App() {
   const DEFAULT_GREETING = "Hello, I am Helix. How can I assist you with your code today?";
   const bottomRef = useRef(null);
@@ -214,7 +197,7 @@ export default function App() {
     localStorage.setItem("helix:theme", theme);
   }, [theme]);
 
-  // Descriptions
+  // Model info
   const MODEL_INFO = useMemo(() => ({
     "deepseek-coder:33b": "Best for code generation, refactors, debugging.",
     "qwen2.5:14b-instruct": "Great for STEM, step-by-step reasoning.",
@@ -233,26 +216,21 @@ export default function App() {
   const [model, setModel] = useState(savedModel || "qwen2.5:14b-instruct");
   const [confirmedModel, setConfirmedModel] = useState(null);
 
-  // Chat state
+  // Chat/state
   const [messages, setMessages] = useState([{ type: "ai", content: DEFAULT_GREETING }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
 
-  // Memory state
-  const [facts, setFacts] = useState({});
-  const [factKey, setFactKey] = useState("");      // not used by dock, but safe if you keep old panel later
-  const [factValue, setFactValue] = useState("");
-  const [noteText, setNoteText] = useState("");
-  const [noteQ, setNoteQ] = useState("");
-  const [noteResults, setNoteResults] = useState([]);
-
+  // Facts (segregated)
+  const [facts, setFacts] = useState({ user: {}, ai: {} });
   const userId = "default";
-  const visuals = useMemo(() => getModelVisual(model), [model]);
 
+  const visuals = useMemo(() => getModelVisual(model), [model]);
   useEffect(() => { localStorage.setItem("helix:model", model); }, [model]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
+  /* models */
   async function refreshModels() {
     setLoadingModels(true); setModelsErr("");
     try {
@@ -263,95 +241,31 @@ export default function App() {
       if (!data.ok) throw new Error(data.error || "Failed to load");
       setInstalled(Array.isArray(data.models) ? data.models : []);
     } catch (e) {
-      setInstalled([]);
-      setModelsErr(String(e?.message || e));
+      setInstalled([]); setModelsErr(String(e?.message || e));
     } finally {
       setLoadingModels(false);
     }
   }
   useEffect(() => { refreshModels(); }, []);
-
-  const installedSet = useMemo(
-    () => new Set(installed.map(n => n.trim().toLowerCase())),
-    [installed]
-  );
+  const installedSet = useMemo(() => new Set(installed.map(n => n.trim().toLowerCase())), [installed]);
   const isInstalled = (name) => installedSet.has((name || "").trim().toLowerCase());
 
-  /* -------- Memory API helpers -------- */
+  /* facts CRUD */
   async function loadFacts() {
     try {
       const r = await fetch(`${API_BASE}/api/memory/facts?userId=${encodeURIComponent(userId)}`);
       const j = await r.json();
-      if (j.ok) setFacts(j.facts || {});
+      if (j.ok) setFacts(j.facts || { user: {}, ai: {} });
     } catch (e) { console.error("loadFacts error", e); }
   }
   useEffect(() => { loadFacts(); }, []);
 
-  async function saveFact() {
-    if (!factKey.trim()) return;
-    try {
-      const body = { userId, facts: { [factKey.trim()]: factValue } };
-      const r = await fetch(`${API_BASE}/api/memory/facts`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (j.ok) { setFacts(j.facts || {}); setFactKey(""); setFactValue(""); }
-    } catch (e) { console.error("saveFact error", e); }
-  }
-
-  async function rememberNote() {
-    if (!noteText.trim()) return;
-    try {
-      await fetch(`${API_BASE}/api/memory/remember`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, text: noteText.trim() }),
-      });
-      setNoteText("");
-    } catch (e) { console.error("rememberNote error", e); }
-  }
-
-  async function searchNotes(q) {
-    try {
-      const r = await fetch(`${API_BASE}/api/memory/search?userId=${encodeURIComponent(userId)}&q=${encodeURIComponent(q)}&k=4`);
-      const j = await r.json();
-      if (j.ok) setNoteResults(j.results || []);
-    } catch (e) { console.error("searchNotes error", e); }
-  }
-
-  async function clearChatMemory() {
-    try {
-      await fetch(`${API_BASE}/api/memory/clear`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ what: "chat", conversationId: "default" }),
-      });
-    } catch (e) { console.error("clearChatMemory error", e); }
-  }
-
-  // One-click remember from a user bubble
-  async function rememberNoteFromText(text) {
-    const t = String(text || "").trim();
-    if (!t) return;
-    try {
-      await fetch(`${API_BASE}/api/memory/remember`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: "default", text: t })
-      });
-    } catch (e) { console.error(e); }
-  }
-
-  // Quick: parse "key=value" or "key value"
-  async function saveFactQuick(raw) {
+  async function saveUserFactQuick(raw) {
     const s = String(raw || "").trim();
     if (!s) return;
     let k = "", v = "";
     if (s.includes("=")) [k, v] = s.split("=").map(x => x.trim());
-    else {
-      const parts = s.split(/\s+/);
-      k = parts.shift(); v = parts.join(" ");
-    }
+    else { const parts = s.split(/\s+/); k = parts.shift(); v = parts.join(" "); }
     if (!k) return;
     try {
       const body = { userId: "default", facts: { [k]: v } };
@@ -360,25 +274,39 @@ export default function App() {
         body: JSON.stringify(body)
       });
       const j = await r.json();
-      if (j.ok) setFacts(j.facts || {});
+      if (j.ok) setFacts(j.facts || { user: {}, ai: {} });
     } catch (e) { console.error(e); }
   }
 
-  // Debounced search
-  function debounce(fn, ms = 250) {
-    let id; return (...args) => { clearTimeout(id); id = setTimeout(() => fn(...args), ms); };
+  async function deleteUserFact(key) {
+    try {
+      const r = await fetch(`${API_BASE}/api/memory/facts`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: "default", bucket: "user", key })
+      });
+      const j = await r.json();
+      if (j.ok) setFacts(j.facts || { user: {}, ai: {} });
+    } catch (e) { console.error(e); }
   }
-  const searchNotesDebounced = useMemo(
-    () => debounce((q) => { setNoteQ(q); searchNotes(q); }, 250),
-    [] // eslint-disable-line
-  );
 
-  // ---------- Chat send (stream-first, fallback) ----------
+  async function clearUserFacts() {
+    try {
+      const r = await fetch(`${API_BASE}/api/memory/facts`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: "default", bucket: "user", all: true })
+      });
+      const j = await r.json();
+      if (j.ok) setFacts(j.facts || { user: {}, ai: {} });
+    } catch (e) { console.error(e); }
+  }
+
+  /* chat send */
   async function sendPrompt(userPrompt) {
     setLoading(true);
     setConfirmedModel(null);
-    setMessages((prev) => [...prev, { type: "user", content: userPrompt }, { type: "ai", content: "" }]);
-
+    setMessages(prev => [...prev, { type: "user", content: userPrompt }, { type: "ai", content: "" }]);
     try {
       const res = await fetch(`${API_BASE}/api/stream`, {
         method: "POST",
@@ -388,14 +316,14 @@ export default function App() {
 
       if (!res.ok || !res.body) {
         const nr = await fetch(`${API_BASE}/api/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ prompt: userPrompt, model })
         });
         const nd = await nr.json();
         if (nd?.data?.model) setConfirmedModel(nd.data.model);
         const reply = nd?.data?.response || nd?.data?.message || "(no response)";
-        setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: reply }; return c; });
+        setMessages(prev => { const c=[...prev]; c[c.length-1]={ type:"ai", content: reply }; return c; });
+        loadFacts();
       } else {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -404,7 +332,7 @@ export default function App() {
 
         const putAI = (s) => {
           aiText += s;
-          setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: aiText }; return c; });
+          setMessages(prev => { const c=[...prev]; c[c.length-1]={ type:"ai", content: aiText }; return c; });
         };
 
         while (true) {
@@ -435,9 +363,7 @@ export default function App() {
               putAI(`\n[error] ${msg}`);
               continue;
             }
-            if (first.startsWith("event: done")) {
-              continue;
-            }
+            if (first.startsWith("event: done")) continue;
 
             for (const l of lines) {
               if (!l.startsWith("data:")) continue;
@@ -450,15 +376,15 @@ export default function App() {
             }
           }
         }
+        loadFacts();
       }
     } catch (e) {
-      setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: "Error: " + String(e) }; return c; });
+      setMessages(prev => { const c=[...prev]; c[c.length-1]={ type:"ai", content: "Error: " + String(e) }; return c; });
     } finally {
       setLoading(false);
     }
   }
 
-  // mic (optional)
   const handleMicClick = async () => {
     if (listening) { setListening(false); return; }
     setListening(true);
@@ -473,21 +399,11 @@ export default function App() {
   const handleSend = (e) => { e.preventDefault(); if (!input.trim()) return; sendPrompt(input.trim()); setInput(""); };
   const currentPurpose = (useMemo(() => MODEL_INFO[model], [MODEL_INFO, model])) || "Local Ollama model";
 
-  // suggestions
-  const DEFAULT_SUGGESTIONS = [
-    "deepseek-coder:33b",
-    "qwen2.5:14b-instruct",
-    "llama3.1:8b",
-    "mistral:7b-instruct",
-    "gemma:7b-instruct",
-    "llama3.1:70b"
-  ];
+  const DEFAULT_SUGGESTIONS = ["deepseek-coder:33b","qwen2.5:14b-instruct","llama3.1:8b","mistral:7b-instruct","gemma:7b-instruct","llama3.1:70b"];
   const suggestedFromInfo = Object.keys(MODEL_INFO || {});
   let suggestionModels = suggestedFromInfo.length ? suggestedFromInfo : DEFAULT_SUGGESTIONS;
   suggestionModels = suggestionModels.filter(m => !installedSet.has(m.trim().toLowerCase()));
-  const ensureCurrentModelOption =
-    !isInstalled(model) &&
-    !suggestionModels.map(s => s.toLowerCase()).includes((model || "").toLowerCase());
+  const ensureCurrentModelOption = !isInstalled(model) && !suggestionModels.map(s => s.toLowerCase()).includes((model || "").toLowerCase());
 
   return (
     <div className={`helix-root ${loading ? "is-thinking" : ""}`}>
@@ -516,54 +432,32 @@ export default function App() {
 
       <main className="helix-main">
         <div className="helix-core-outer">
-          <HelixCore spinning={loading} colors={visuals.colors} speed={visuals.speed} />
+          <HelixCore spinning={loading} colors={getModelVisual(model).colors} speed={getModelVisual(model).speed} />
         </div>
 
         {/* Model picker */}
         <div className="helix-model-row">
           <div className="helix-model-top">
-            <select
-              className="helix-model-select"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              title={currentPurpose}
-            >
-              {ensureCurrentModelOption && (
-                <option value={model}>{model || "(no model selected)"}</option>
-              )}
-
+            <select className="helix-model-select" value={model} onChange={(e) => setModel(e.target.value)} title={currentPurpose}>
+              {ensureCurrentModelOption && (<option value={model}>{model || "(no model selected)"}</option>)}
               <optgroup label="Installed">
                 {installed.length === 0 && <option value="" disabled>(none)</option>}
-                {installed.map((m) => (
-                  <option key={`i-${m}`} value={m}>{m}</option>
-                ))}
+                {installed.map((m) => (<option key={`i-${m}`} value={m}>{m}</option>))}
               </optgroup>
-
               <optgroup label="Suggestions">
                 {suggestionModels.length === 0 && <option value="" disabled>(none)</option>}
-                {suggestionModels.map(m => (
-                  <option key={`s-${m}`} value={m}>
-                    {m}{MODEL_INFO[m] ? ` — ${MODEL_INFO[m]}` : " — (not installed)"}
-                  </option>
-                ))}
+                {suggestionModels.map(m => (<option key={`s-${m}`} value={m}>{m}{MODEL_INFO[m] ? ` — ${MODEL_INFO[m]}` : " — (not installed)"}</option>))}
               </optgroup>
             </select>
-
             <button className="helix-mini-btn" onClick={refreshModels} disabled={loadingModels} title="Refresh installed models">
               <FaSync /> {loadingModels ? "Refreshing..." : "Refresh"}
             </button>
           </div>
 
           <div className="helix-model-purpose">
-            <span className={`helix-badge ${isInstalled(model) ? "ok" : "warn"}`}>
-              {isInstalled(model) ? "Installed" : "Not installed"}
-            </span>
-            {confirmedModel && (
-              <span className="helix-badge now">
-                Using: <strong>{confirmedModel}</strong>
-              </span>
-            )}
-            <PowerBadge tierLabel={visuals.tierLabel} />
+            <span className={`helix-badge ${isInstalled(model) ? "ok" : "warn"}`}>{isInstalled(model) ? "Installed" : "Not installed"}</span>
+            {confirmedModel && (<span className="helix-badge now">Using: <strong>{confirmedModel}</strong></span>)}
+            <PowerBadge tierLabel={getModelVisual(model).tierLabel} />
           </div>
 
           {modelsErr && <div className="helix-warning">Couldn’t read installed models. {modelsErr}</div>}
@@ -575,17 +469,6 @@ export default function App() {
             <div key={idx} className={`helix-msg ${msg.type}`}>
               <div className={`helix-msg-bubble ${msg.type}`}>
                 {renderRichContent(msg.content)}
-                {msg.type === "user" && (
-                  <div className="helix-bubble-actions">
-                    <button
-                      className="helix-chip"
-                      title="Remember this as a note"
-                      onClick={() => rememberNoteFromText(msg.content)}
-                    >
-                      Remember
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           ))}
@@ -599,40 +482,27 @@ export default function App() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Minimal Memory Dock */}
-        <CompactMemory
+        {/* Segregated facts UI */}
+        <FactsDock
           facts={facts}
           onReloadFacts={loadFacts}
-          onSaveFact={saveFactQuick}
-          noteQ={noteQ}
-          setNoteQ={setNoteQ}
-          noteResults={noteResults}
-          onSearchNotes={searchNotesDebounced}
-          onRemember={async (t) => { if (t) await rememberNoteFromText(t); }}
+          onSaveUserFact={saveUserFactQuick}
+          onDeleteUserFact={deleteUserFact}
+          onClearUserFacts={clearUserFacts}
         />
 
         {/* Input */}
         <form className="helix-input-row" onSubmit={handleSend}>
           <div className="helix-input-wrapper">
             <input
-              type="text"
-              className="helix-input"
-              placeholder="Type your prompt for Helix..."
-              value={input}
-              onChange={e => setInput(e.target.value)}
+              type="text" className="helix-input" placeholder="Type your prompt for Helix..."
+              value={input} onChange={e => setInput(e.target.value)}
             />
-            <button
-              type="button"
-              className={`helix-mic-btn ${listening ? "mic-on" : ""}`}
-              title="Voice"
-              onClick={handleMicClick}
-            >
+            <button type="button" className={`helix-mic-btn ${listening ? "mic-on" : ""}`} title="Voice" onClick={handleMicClick}>
               <FaMicrophone />
             </button>
           </div>
-          <button className="helix-send-btn" type="submit">
-            Send
-          </button>
+          <button className="helix-send-btn" type="submit">Send</button>
         </form>
         <p className="helix-status">Helix AI is running offline on your device.</p>
       </main>

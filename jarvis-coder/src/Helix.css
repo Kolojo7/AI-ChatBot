@@ -332,20 +332,16 @@ body {
   border: 1px solid rgba(255,255,255,.15);
   line-height: 1.2;
 }
-/* Minimal memory dock */
+/* Minimal memory (facts) dock */
 .mem-dock { margin: 8px 0 16px; background: rgba(255,255,255,.035); border-radius: 12px; padding: 8px; }
 .mem-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .mem-pill { border: none; border-radius: 999px; padding: 6px 12px; background: rgba(255,255,255,.06); color: #fff; cursor: pointer; }
 .mem-btn { border: none; border-radius: 8px; padding: 6px 10px; background: rgba(255,255,255,.08); color: #fff; cursor: pointer; }
 .mem-btn.ghost { background: transparent; opacity: .8; }
-.mem-input { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 6px 10px; color: #fff; min-width: 180px; }
+.mem-input { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 6px 10px; color: #fff; min-width: 200px; }
 .mem-panel { margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,.08); }
-.mem-section { margin-top: 6px; }
+.mem-section { margin-top: 8px; }
 .mem-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.mem-chip { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 4px 10px; }
-.mem-list { margin: 6px 0 0; padding-left: 18px; }
-.mem-dim { opacity: .7; }
-
-/* “Remember” chip in user bubbles */
-.helix-bubble-actions { margin-top: 6px; }
-.helix-chip { font-size: 12px; border: none; border-radius: 999px; padding: 4px 10px; background: rgba(255,255,255,.08); color: #fff; cursor: pointer; }
+.mem-chip { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; }
+.mem-chip-x { border: none; background: transparent; color: #ff9aa2; cursor: pointer; padding: 0 2px; }
+.mem-chip-x:hover { color: #ff6b6b; }

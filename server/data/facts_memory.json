@@ -1,5 +1,9 @@
 {
   "default": {
-    "name": "vedansh"
+    "user": {},
+    "ai": {
+      "name": "Helix",
+      "role": "local coding assistant"
+    }
   }
 }
