@@ -1,4 +1,4 @@
- /* ---------- Theme Primitives ---------- */
+/* ---------- Theme Primitives ---------- */
 :root {
   --bg-0: #0c0b10;
   --bg-1: #121018;
@@ -58,15 +58,13 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
 }
 
-/* Ambient glow and animated noise overlay (ultra subtle) */
+/* Ambient glow & noise */
 .helix-bg-glow {
   position: fixed; inset: -20% -20% auto -20%;
   height: 70vh;
   background: radial-gradient(40vw 30vw at 60% 10%, rgba(255,61,113,.12), transparent 60%),
               radial-gradient(35vw 25vw at 20% 10%, rgba(255,61,113,.08), transparent 60%);
-  pointer-events: none;
-  z-index: 0;
-  filter: blur(40px);
+  pointer-events: none; z-index: 0; filter: blur(40px);
 }
 .helix-noise {
   position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .05;
@@ -79,12 +77,7 @@ body {
 @keyframes grain { 0%{transform:translate(0,0)} 100%{transform:translate(-120px,-120px)} }
 
 /* ---------- Layout ---------- */
-.helix-root {
-  position: relative;
-  display: flex;
-  min-height: 100vh;
-  z-index: 1;
-}
+.helix-root { position: relative; display: flex; min-height: 100vh; z-index: 1; }
 
 .helix-sidebar {
   width: 74px;
@@ -96,29 +89,16 @@ body {
 
 .helix-avatar-wrap { margin-bottom: 42px; position: relative; }
 .helix-avatar-pulse {
-  position: absolute; inset: -8px;
-  border-radius: 50%;
-  border: 2px solid var(--accent);
-  opacity: .35;
-  animation: pulse 2.8s infinite ease-in-out;
+  position: absolute; inset: -8px; border-radius: 50%; border: 2px solid var(--accent);
+  opacity: .35; animation: pulse 2.8s infinite ease-in-out;
 }
 .helix-avatar { font-size: 2rem; color: var(--accent); background: var(--bg-2); border-radius: 50%; padding: 10px; box-shadow: 0 0 40px var(--accent); border: 2px solid rgba(255,255,255,.06); }
 @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.12)} }
 .helix-sidebar-btns { display: flex; flex-direction: column; gap: 18px; }
-.helix-btn {
-  background: none; border: none; color: var(--subtle);
-  font-size: 1.25rem; cursor: pointer; transition: .16s ease color, .16s ease transform;
-}
+.helix-btn { background: none; border: none; color: var(--subtle); font-size: 1.25rem; cursor: pointer; transition: .16s ease color, .16s ease transform; }
 .helix-btn:hover { color: var(--muted); transform: translateY(-1px); }
-.helix-btn.mic-on svg, .helix-mic-btn.mic-on svg {
-  animation: micGlow 1.2s infinite;
-  color: var(--muted);
-}
-@keyframes micGlow {
-  0% { filter: drop-shadow(0 0 0px var(--accent)); }
-  50% { filter: drop-shadow(0 0 8px var(--accent)); }
-  100% { filter: drop-shadow(0 0 0px var(--accent)); }
-}
+.helix-btn.mic-on svg, .helix-mic-btn.mic-on svg { animation: micGlow 1.2s infinite; color: var(--muted); }
+@keyframes micGlow { 0% { filter: drop-shadow(0 0 0px var(--accent)); } 50% { filter: drop-shadow(0 0 8px var(--accent)); } 100% { filter: drop-shadow(0 0 0px var(--accent)); } }
 
 /* theme toggle */
 .helix-theme-toggle { margin-top: auto; padding-top: 24px; }
@@ -130,49 +110,41 @@ body {
 }
 .helix-mini-btn:hover { color: var(--text); border-color: rgba(255,255,255,.16); }
 
-.helix-main {
-  flex: 1; display: flex; flex-direction: column; align-items: center;
-  padding: 28px 16px; min-width: 0;
-}
+.helix-main { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 28px 16px; min-width: 0; }
 
 /* ---------- Helix Core ---------- */
 .helix-core-outer { margin-bottom: 14px; }
 .helix-core {
-  position: relative;
-  width: 90px; height: 90px;
-  border-radius: 50%;
+  position: relative; width: 90px; height: 90px; border-radius: 50%;
   background: radial-gradient(circle at 50% 45%, var(--panel), var(--panel-2));
   border: 3px solid rgba(255,255,255,.06);
   box-shadow: 0 0 60px rgba(0,0,0,.4), inset 0 0 20px rgba(0,0,0,.5);
 }
-.helix-core.spin .helix-svg { animation: coreSpin 10s linear infinite; }
+.helix-core.spin .helix-svg { animation: coreSpin var(--spinSec, 10s) linear infinite; }
 @keyframes coreSpin { from { transform: rotate(0deg)} to { transform: rotate(360deg)} }
 
-.helix-core-glow {
-  content:""; position: absolute; inset: -10px; border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(255,61,113,.25), transparent 65%);
-  filter: blur(8px); pointer-events: none;
-}
+.helix-core-glow { content:""; position: absolute; inset: -10px; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255,61,113,.25), transparent 65%); filter: blur(8px); pointer-events: none; }
 .helix-svg { width: 100%; height: 100%; }
-.helix-svg .ring { fill: none; stroke: var(--accent); opacity: .25; stroke-width: 1.7; }
-.helix-svg .node.a { fill: var(--accent-soft); opacity: .9; }
-.helix-svg .node.b { fill: var(--accent); opacity: .9; }
+.helix-svg .ring { fill: none; stroke: var(--helixRing, var(--accent)); opacity: .28; stroke-width: 1.7; }
+.helix-svg .node.a { fill: var(--helixA, var(--accent-soft)); }
+.helix-svg .node.b { fill: var(--helixB, var(--accent)); }
 .helix-svg .rung { stroke: rgba(255,255,255,.14); stroke-width: 1.2; }
 
 /* ---------- Model Row ---------- */
 .helix-model-row { width: 100%; max-width: 760px; margin-bottom: 10px; }
 .helix-model-top { display: flex; gap: 10px; align-items: center; }
 .helix-model-select {
-  flex: 1;
+  flex: 1; appearance: none;
   background: linear-gradient(180deg, var(--panel), var(--panel-2));
-  color: var(--text);
-  border: 1px solid rgba(255,255,255,.08);
-  border-radius: 12px; padding: 10px 12px; outline: none;
+  color: var(--text); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px; padding: 10px 12px;
 }
-.helix-model-select:hover { border-color: rgba(255,255,255,.14); }
+.helix-model-select:focus { outline: none; border-color: var(--accent); }
+.helix-model-select optgroup { color: var(--subtle); background: var(--panel); }
+.helix-model-select option { color: var(--text); background: var(--panel-2); }
 
 .helix-model-purpose { margin-top: 8px; display: flex; gap: 8px; align-items: center; }
-
 .helix-badge {
   display:inline-flex; align-items:center; gap:6px;
   margin-right:8px; padding:4px 8px; border-radius:10px; font-size:.85rem;
@@ -183,6 +155,14 @@ body {
 .helix-badge.ok { border-color: rgba(80,210,150,.4); background: rgba(80,210,150,.12); color: #d6ffef; }
 .helix-badge.warn { border-color: rgba(255,180,90,.35); background: rgba(255,180,90,.12); color: #ffe7c7; }
 .helix-badge.now { border-color: rgba(140,170,255,.4); background: rgba(140,170,255,.12); color: #e6ecff; }
+.helix-badge.power { border-color: rgba(140,170,255,.35); background: rgba(140,170,255,.12); color: #e6ecff; }
+
+/* Power bar */
+.powerbar-wrap { display:flex; gap:10px; align-items:center; margin-top:8px; }
+.powerbar-track { position: relative; flex:1; height: 8px; background: rgba(255,255,255,.08); border-radius: 999px; overflow: hidden; }
+.powerbar-fill { position:absolute; left:0; top:0; bottom:0; background: linear-gradient(90deg, var(--accent-soft), var(--accent)); border-radius: 999px; }
+.powerbar-label { font-size:.85rem; color: var(--muted); }
+.model-desc { margin-top:6px; color: var(--subtle); }
 
 /* ---------- Chat ---------- */
 .helix-chat-area {
@@ -211,20 +191,46 @@ body {
 .helix-msg-bubble.ai { border-left: 3px solid var(--accent); color: var(--text); }
 .helix-msg-bubble.user { border-right: 3px solid var(--accent); color: var(--muted); background: linear-gradient(180deg, var(--panel-2), var(--panel)); }
 
-/* code blocks container */
+/* code blocks */
 .helix-code-wrap { margin-top: 6px; }
-.helix-code-bar {
-  display: flex; justify-content: space-between; align-items: center;
-  font-size: .85rem; color: var(--subtle); margin-bottom: 6px;
-}
+.helix-code-bar { display: flex; justify-content: space-between; align-items: center; font-size: .85rem; color: var(--subtle); margin-bottom: 6px; }
 .helix-code-actions { display: inline-flex; gap: 6px; }
-/* .helix-icon-btn { background: none; border: 1px solid rgba(255,255,255,.08); color: var(--muted); padding: 4px 6px; border-radius: 8px; cursor: pointer; } */
+.helix-icon-btn { background: none; border: 1px solid rgba(255,255,255,.08); color: var(--muted); padding: 4px 6px; border-radius: 8px; cursor: pointer; }
 .helix-icon-btn:hover { color: var(--text); border-color: rgba(255,255,255,.18); }
 
 .typing-dots { display: inline-flex; margin-left: 6px; font-size: 1.2em; }
 .typing-dots span { animation: bounce 1s infinite alternate; margin-right: 1px; }
 .typing-dots span:nth-child(2){ animation-delay:.12s } .typing-dots span:nth-child(3){ animation-delay:.24s }
 @keyframes bounce { to { transform: translateY(-3px); opacity: .7; }}
+
+/* ---------- Tools / Memory ---------- */
+.tools-toggle-row { width:100%; max-width:760px; margin-top:10px; display:flex; justify-content:flex-start; }
+.mem-pill {
+  display:inline-flex; align-items:center; gap:8px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+  color: var(--text); border-radius: 999px; padding: 6px 12px;
+  cursor:pointer; transition: .15s ease;
+}
+.mem-pill.on { border-color: rgba(140,170,255,.35); background: rgba(140,170,255,.12); }
+.chip-inline { margin-left: 10px; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.12); }
+.chip-inline.dim { color: var(--subtle); border-color: rgba(255,255,255,.08); }
+
+.mem-dock { width:100%; max-width:760px; margin: 8px 0 16px; background: rgba(255,255,255,.035);
+  border-radius: 12px; padding: 10px; border: 1px solid rgba(255,255,255,.08); }
+.mem-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mem-btn { border: none; border-radius: 8px; padding: 6px 10px; background: rgba(255,255,255,.08); color: #fff; cursor: pointer; }
+.mem-btn.warn { background: rgba(255,100,100,.15); border: 1px solid rgba(255,120,120,.25); }
+.mem-btn.ghost { background: transparent; opacity: .8; border: 1px dashed rgba(255,255,255,.10); }
+.mem-input { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.10); border-radius: 10px; padding: 6px 10px; color: #fff; min-width: 200px; }
+.mem-dim { color: var(--subtle); }
+.mem-panel { margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,.08); }
+.mem-section { margin-top: 8px; }
+.mem-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.mem-chip { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; }
+.mem-chip.ok { border-color: rgba(80,210,150,.4); background: rgba(80,210,150,.12); }
+.mem-chip.warn { border-color: rgba(255,180,90,.35); background: rgba(255,180,90,.12); }
+.mem-chip-x { border: none; background: transparent; color: #ff9aa2; cursor: pointer; padding: 0 2px; }
 
 /* ---------- Input Row ---------- */
 .helix-input-row {width: 100%; max-width: 760px; display: flex; margin-top: 10px;}
@@ -234,9 +240,9 @@ body {
   padding: 13px 48px 13px 20px;
   font-size: 1.1rem;
   border-radius: 15px 0 0 15px;
-  border: 2px solid rgba(255, 255, 255, 0.1); 
+  border: 2px solid rgba(255, 255, 255, 0.1);
   border-right: none;
-  background: linear-gradient(180deg, var(--panel), var(--panel-2)); 
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
   color: var(--text);
   outline: none;
   transition: border-color 0.2s;
@@ -245,39 +251,21 @@ body {
 .helix-input:focus {border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(255, 61, 113, 0.25);}
 
 .helix-mic-btn {
-  position: absolute;
-  top: 55%;
-  right: 8px;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  color: var(--subtle); 
-  font-size: 1.3rem;
-  cursor: pointer;
-  transition: filter 0.2s; 
+  position: absolute; top: 55%; right: 8px; transform: translateY(-50%);
+  background: none; border: none; color: var(--subtle);
+  font-size: 1.3rem; cursor: pointer; transition: filter 0.2s;
 }
 .helix-mic-btn:hover {filter: brightness(1.3);}
 
 .helix-send-btn {
-  background: linear-gradient(90deg, var(--accent), var(--accent-dim)); 
-  color: #fff; 
-  border: none;
-  border-radius: 0 15px 15px 0;
-  padding: 0 26px;
-  font-size: 1.15rem;
-  font-weight: 600;
-  cursor: pointer;
-   box-shadow: 0 0 10px var(--accent); 
-  transition: filter 0.22s, box-shadow 0.22s;
+  background: linear-gradient(90deg, var(--accent), var(--accent-dim));
+  color: #fff; border: none; border-radius: 0 15px 15px 0; padding: 0 26px;
+  font-size: 1.15rem; font-weight: 600; cursor: pointer;
+  box-shadow: 0 0 10px var(--accent); transition: filter 0.22s, box-shadow 0.22s;
 }
 .helix-send-btn:hover {filter: brightness(1.08); box-shadow: 0 0 20px var(--accent);}
 
 .helix-status { margin-top: 10px; font-size: .92rem; color: var(--subtle); text-align: center; }
-.helix-status-dot {
-  display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%;
-  background: rgba(255,255,255,.25);
-}
-.helix-status-dot.on { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
 
 /* toast */
 .helix-copy-toast {
@@ -288,60 +276,6 @@ body {
 }
 .helix-copy-toast.show { opacity: 1; }
 
-/* Thinking effect (gentle vignette pulse) */
+/* thinking */
 .helix-root.is-thinking .helix-bg-glow { filter: blur(52px) brightness(1.05); }
-/* Make select and its options readable on dark */
-.helix-model-select {
-  appearance: none;
-  color: var(--text);
-  background: linear-gradient(180deg, var(--panel), var(--panel-2));
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: 12px;
-  padding: 10px 12px;
-}
-.helix-model-select:focus { outline: none; border-color: var(--accent); }
-.helix-model-select optgroup { color: var(--subtle); background: var(--panel); }
-.helix-model-select option {
-  color: var(--text);
-  background: var(--panel-2);
-}
 
-/* Helix core colors & speed are driven by CSS variables now */
-.helix-core.spin .helix-svg { animation: coreSpin var(--spinSec, 10s) linear infinite; }
-.helix-svg .ring { stroke: var(--helixRing, var(--accent)); opacity: .28; }
-.helix-svg .node.a { fill: var(--helixA, var(--accent-soft)); }
-.helix-svg .node.b { fill: var(--helixB, var(--accent)); }
-.helix-core-glow { background: radial-gradient(closest-side, var(--helixGlow, rgba(255,61,113,.25)), transparent 65%); }
-
-/* Power badge flavor */
-.helix-badge.power {
-  border-color: rgba(140,170,255,.35);
-  background: rgba(140,170,255,.12);
-  color: #e6ecff;
-}
-/* Force readable dropdown options on Windows / dark themes */
-.helix-model-select,
-.helix-model-select optgroup,
-.helix-model-select option {
-  color: var(--text);
-  background-color: var(--panel-2);
-}
-
-/* Some environments ignore option backgrounds—add border and bigger line-height */
-.helix-model-select {
-  border: 1px solid rgba(255,255,255,.15);
-  line-height: 1.2;
-}
-/* Minimal memory (facts) dock */
-.mem-dock { margin: 8px 0 16px; background: rgba(255,255,255,.035); border-radius: 12px; padding: 8px; }
-.mem-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.mem-pill { border: none; border-radius: 999px; padding: 6px 12px; background: rgba(255,255,255,.06); color: #fff; cursor: pointer; }
-.mem-btn { border: none; border-radius: 8px; padding: 6px 10px; background: rgba(255,255,255,.08); color: #fff; cursor: pointer; }
-.mem-btn.ghost { background: transparent; opacity: .8; }
-.mem-input { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 10px; padding: 6px 10px; color: #fff; min-width: 200px; }
-.mem-panel { margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(255,255,255,.08); }
-.mem-section { margin-top: 8px; }
-.mem-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.mem-chip { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 999px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; }
-.mem-chip-x { border: none; background: transparent; color: #ff9aa2; cursor: pointer; padding: 0 2px; }
-.mem-chip-x:hover { color: #ff6b6b; }
