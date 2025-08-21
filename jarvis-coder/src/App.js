@@ -6,6 +6,8 @@ import {
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import "./Helix.css";
+import HelixEditor from "./HelixEditor";
+import NotesEditor from "./NotesEditor";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://127.0.0.1:4000";
 const CONVERSATION_ID = "default";
@@ -84,7 +86,7 @@ function getModelVisual(model) {
   const p = palettes[family] || palettes.general;
   const speeds = { light: 14, mid: 11, pro: 8, ultra: 6 };
   const speed = speeds[tier] || 12;
-  const label = { light: "Light", mid: "Mid", pro: "Pro", ultra: "Ultra" }[tier];
+  const label = { light: "Light", mid: "Mid", pro: "Ultra" }[tier] || (tier === "pro" ? "Pro" : "Light");
   const powerPercent = { light: 25, mid: 50, pro: 75, ultra: 100 }[tier] || 40;
   return { colors: p, speed, tierLabel: label, powerPercent };
 }
@@ -239,73 +241,66 @@ export default function App() {
   }
 
   /* ---------------- role APIs (per chat) ---------------- */
-// ----- role APIs (per chat) -----
-async function loadRole() {
-  try {
-    const res = await fetch(`${API_BASE}/api/memory/ai-role?conversationId=${encodeURIComponent(CONVERSATION_ID)}`);
-    const text = await res.text();
-    let j = {};
-    try { j = JSON.parse(text); } catch { j = {}; }
-    const role = j?.role || "";
-    setRoleSaved(role);
-    setRoleInput(role);
-  } catch (e) {
-    // silent; keep UI usable
+  async function loadRole() {
+    try {
+      const res = await fetch(`${API_BASE}/api/memory/ai-role?conversationId=${encodeURIComponent(CONVERSATION_ID)}`);
+      const text = await res.text();
+      let j = {};
+      try { j = JSON.parse(text); } catch { j = {}; }
+      const role = j?.role || "";
+      setRoleSaved(role);
+      setRoleInput(role);
+    } catch (e) {}
   }
-}
-
-async function saveRole() {
-  // Treat empty role as "clear"
-  if (!roleInput.trim()) return clearRole();
-
-  setRoleStatus("saving");
-  try {
-    const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversationId: CONVERSATION_ID, role: roleInput })
-    });
-
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || res.statusText);
-
-    let j = {};
-    try { j = JSON.parse(text); } catch { j = {}; }
-    const role = j?.role ?? j?.data?.role ?? "";
-
-    if (typeof role !== "string") throw new Error("Bad server response");
-
-    setRoleSaved(role);
-    setRoleStatus("saved");
-  } catch (e) {
-    setRoleStatus("error");
-  } finally {
-    setTimeout(() => setRoleStatus(""), 1200);
+  async function saveRole() {
+    if (!roleInput.trim()) return clearRole();
+    setRoleStatus("saving");
+    try {
+      const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: CONVERSATION_ID, role: roleInput })
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      let j = {};
+      try { j = JSON.parse(text); } catch { j = {}; }
+      const role = j?.role ?? j?.data?.role ?? "";
+      if (typeof role !== "string") throw new Error("Bad server response");
+      setRoleSaved(role);
+      setRoleStatus("saved");
+    } catch (e) {
+      setRoleStatus("error");
+    } finally {
+      setTimeout(() => setRoleStatus(""), 1200);
+    }
   }
-}
-
-async function clearRole() {
-  setRoleStatus("saving");
-  try {
-    const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversationId: CONVERSATION_ID })
-    });
-
-    const text = await res.text();
-    if (!res.ok) throw new Error(text || res.statusText);
-
-    // Accept either {ok:true, role:""} or any JSON
-    setRoleSaved("");
-    setRoleInput("");
-    setRoleStatus("cleared");
-  } catch (e) {
-    setRoleStatus("error");
-  } finally {
-    setTimeout(() => setRoleStatus(""), 1200);
+  async function clearRole() {
+    setRoleStatus("saving");
+    try {
+      const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: CONVERSATION_ID })
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      setRoleSaved("");
+      setRoleInput("");
+      setRoleStatus("cleared");
+    } catch (e) {
+      setRoleStatus("error");
+    } finally {
+      setTimeout(() => setRoleStatus(""), 1200);
+    }
   }
-}
+
+  /* --------- Load facts and role on mount (also fixes ESLint unused warn) --------- */
+  useEffect(() => {
+    loadFacts();
+    loadRole();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ---------------- send prompt ---------------- */
   async function sendPrompt(userPrompt) {
@@ -320,7 +315,6 @@ async function clearRole() {
       });
 
       if (!res.ok || !res.body) {
-        // Fallback to non-stream
         const nr = await fetch(`${API_BASE}/api/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -404,7 +398,29 @@ async function clearRole() {
     setListening(false);
   };
 
-  const handleSend = (e) => { e.preventDefault(); if (!input.trim()) return; sendPrompt(input.trim()); setInput(""); };
+  /* ───────── Notes/Code view state ───────── */
+  const [activePanel, setActivePanel] = useState("code"); // "code" | "notes" | "hidden"
+  const notesRef = useRef(null);
+
+  const handleSend = (e) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+
+    // Slash command: /notes [optional title]
+    if (input.trim().toLowerCase().startsWith("/notes")) {
+      const title = input.replace(/^\/notes\s*/i, "").trim();
+      setActivePanel("notes");
+      setTimeout(() => {
+        notesRef.current?.createNote(title || "New Note");
+        notesRef.current?.focus();
+      }, 0);
+      setInput("");
+      return;
+    }
+
+    sendPrompt(input.trim());
+    setInput("");
+  };
 
   // suggestions
   const DEFAULT_SUGGESTIONS = [
@@ -421,6 +437,52 @@ async function clearRole() {
   const ensureCurrentModelOption =
     !isInstalled(model) &&
     !suggestionModels.map(s => s.toLowerCase()).includes((model || "").toLowerCase());
+
+  /* ───────── Split logic for resizable panes ───────── */
+  const [leftPct, setLeftPct] = useState(() => {
+    const v = Number(localStorage.getItem("helix:leftPct"));
+    return Number.isFinite(v) && v >= 20 && v <= 80 ? v : 58;
+  });
+  const draggingRef = useRef(false);
+
+  useEffect(() => {
+    localStorage.setItem("helix:leftPct", String(leftPct));
+  }, [leftPct]);
+
+  function onDragStart(e) {
+    e.preventDefault();
+    draggingRef.current = true;
+    document.body.classList.add("helix-noselect");
+  }
+  function onDragMove(e) {
+    if (!draggingRef.current) return;
+    const container = document.querySelector(".helix-workspace");
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
+    let pct = (x / rect.width) * 100;
+    pct = Math.max(25, Math.min(75, pct));
+    setLeftPct(pct);
+  }
+  function onDragEnd() {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    document.body.classList.remove("helix-noselect");
+  }
+  useEffect(() => {
+    const move = (e) => onDragMove(e);
+    const up   = () => onDragEnd();
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("touchmove", move, { passive: false });
+    window.addEventListener("touchend", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchend", up);
+    };
+  }, []);
 
   return (
     <div className={`helix-root ${loading ? "is-thinking" : ""}`}>
@@ -512,112 +574,185 @@ async function clearRole() {
           {modelsErr && <div className="helix-warning">Couldn’t read installed models. {modelsErr}</div>}
         </div>
 
-        {/* Chat */}
-        <div className="helix-chat-area">
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`helix-msg ${msg.type}`}>
-              <div className={`helix-msg-bubble ${msg.type}`}>
-                {renderRichContent(msg.content)}
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="helix-msg ai">
-              <div className="helix-msg-bubble ai">
-                <span>Helix is thinking</span> <TypingDots />
-              </div>
-            </div>
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* Tools toggle row */}
-        <div className="tools-toggle-row">
-          <button
-            className={`mem-pill ${showMemory ? "on" : ""}`}
-            onClick={() => setShowMemory(s => !s)}
-            title="Toggle Memory & Role"
+        {/* ───────────────── Workspace: Chat ⇄ Editor (resizable) ───────────────── */}
+        <div className="helix-workspace">
+          {/* Left pane: CHAT */}
+          <section
+            className="helix-pane pane-chat"
+            style={{ width: `${leftPct}%` }}
+            onMouseMove={onDragMove}
+            onTouchMove={onDragMove}
           >
-            <FaDatabase/> Memory {showMemory ? "Hide" : "Show"}
-            {roleSaved ? <span className="chip-inline">role: {roleSaved}</span> : <span className="chip-inline dim">no role</span>}
-          </button>
+            <div className="helix-pane-header">
+              <strong>Chat</strong>
+              <span className="pane-subtle">{MODEL_INFO[model] || "Local Ollama model"}</span>
+            </div>
+
+            <div className="helix-chat-area pane-scroll">
+              {messages.map((msg, idx) => (
+                <div key={idx} className={`helix-msg ${msg.type}`}>
+                  <div className={`helix-msg-bubble ${msg.type}`}>
+                    {renderRichContent(msg.content)}
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="helix-msg ai">
+                  <div className="helix-msg-bubble ai">
+                    <span>Helix is thinking</span> <TypingDots />
+                  </div>
+                </div>
+              )}
+              <div ref={bottomRef} />
+            </div>
+
+            {/* Tools toggle row */}
+            <div className="tools-toggle-row slim">
+              <button
+                className={`mem-pill ${showMemory ? "on" : ""}`}
+                onClick={() => setShowMemory(s => !s)}
+                title="Toggle Memory & Role"
+              >
+                <FaDatabase/> Memory {showMemory ? "Hide" : "Show"}
+                {roleSaved ? <span className="chip-inline">role: {roleSaved}</span> : <span className="chip-inline dim">no role</span>}
+              </button>
+            </div>
+
+            {/* Memory (collapsible) */}
+            {showMemory && (
+              <div className="mem-dock minimalist">
+                <div className="mem-row">
+                  <strong>Memory</strong>
+                  <span className="mem-dim">user fact (e.g., <code>name=Vedansh</code>)</span>
+                  <input className="mem-input" value={factKV} onChange={e=>setFactKV(e.target.value)} placeholder="key=value" />
+                  <button className="mem-btn" onClick={saveFactKV}>Save</button>
+                  <button className="mem-btn ghost" onClick={loadFacts}>Reload</button>
+                  <button className="mem-btn warn" onClick={clearUserFacts}>Clear</button>
+                </div>
+
+                <div className="mem-panel">
+                  <div className="mem-section">
+                    <strong>User Facts</strong>
+                    <div className="mem-chips" style={{marginTop:6}}>
+                      {Object.keys(facts.user || {}).length === 0 && <span className="mem-dim">(none)</span>}
+                      {Object.entries(facts.user || {}).map(([k,v])=>(
+                        <span key={k} className="mem-chip">
+                          <code>{k}</code>: {String(v)}
+                          <button className="mem-chip-x" onClick={()=>deleteFact(k)}>✕</button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mem-section">
+                    <strong>AI Role (this chat)</strong>{" "}
+                    <span className="mem-dim">override instructions</span>
+                    <div className="mem-row" style={{marginTop:6}}>
+                      <input className="mem-input" placeholder="e.g., Be a strict DSA tutor" value={roleInput} onChange={e=>setRoleInput(e.target.value)} />
+                      <button className="mem-btn" onClick={saveRole}>Save</button>
+                      <button className="mem-btn" onClick={clearRole}>Clear</button>
+                      {roleStatus === "saving" && <span className="mem-chip dim">saving…</span>}
+                      {roleStatus === "saved" && <span className="mem-chip ok">saved</span>}
+                      {roleStatus === "cleared" && <span className="mem-chip">cleared</span>}
+                      {roleStatus === "error" && <span className="mem-chip warn">error</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Input row pinned to bottom of left pane */}
+            <form className="helix-input-row tight" onSubmit={handleSend}>
+              <div className="helix-input-wrapper">
+                <input
+                  type="text"
+                  className="helix-input"
+                  placeholder="Type your prompt for Helix...  (tip: /notes Project Plan)"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className={`helix-mic-btn ${listening ? "mic-on" : ""}`}
+                  title="Voice"
+                  onClick={handleMicClick}
+                >
+                  <FaMicrophone />
+                </button>
+              </div>
+              <button className="helix-send-btn" type="submit">Send</button>
+            </form>
+          </section>
+
+          {/* Resize handle */}
+          <div
+            className="helix-resizer"
+            onMouseDown={onDragStart}
+            onTouchStart={onDragStart}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize panes"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowLeft") setLeftPct(p => Math.max(25, p - 2));
+              if (e.key === "ArrowRight") setLeftPct(p => Math.min(75, p + 2));
+            }}
+          />
+
+          {/* Right pane: EDITOR / NOTES / HIDDEN */}
+          <aside
+            className="helix-pane pane-editor"
+            style={{ width: `${100 - leftPct}%` }}
+            onMouseMove={onDragMove}
+            onTouchMove={onDragMove}
+          >
+            <div className="helix-pane-header">
+              <div>
+                <strong>Workspace</strong>
+                <span className="pane-subtle"> — switch views</span>
+              </div>
+              <div style={{marginLeft:"auto", display:"flex", gap:"6px"}}>
+                <button className={`mem-btn ${activePanel === "code" ? "" : "ghost"}`} onClick={()=>setActivePanel("code")}>Code</button>
+                <button className={`mem-btn ${activePanel === "notes" ? "" : "ghost"}`} onClick={()=>setActivePanel("notes")}>Notes</button>
+                <button className="mem-btn ghost" onClick={()=>setActivePanel("hidden")}>Hide</button>
+              </div>
+            </div>
+
+            <div className="pane-scroll" style={{padding:0}}>
+              {activePanel === "code" && (
+                <HelixEditor
+                  onInsertToChat={(codeFence) => {
+                    sendPrompt(`Please consider this code:\n\n${codeFence}`);
+                  }}
+                  onAskAI={(prompt) => {
+                    sendPrompt(prompt);
+                  }}
+                />
+              )}
+
+              {activePanel === "notes" && (
+                <NotesEditor
+                  ref={notesRef}
+                  onInsertToChat={(text) => {
+                    // Send note content to chat (both see it)
+                    sendPrompt(text);
+                  }}
+                  onAskAI={(prompt) => {
+                    // Ask Helix to improve the current note
+                    sendPrompt(prompt);
+                  }}
+                />
+              )}
+
+              {activePanel === "hidden" && (
+                <div className="mem-dim" style={{padding:12}}>
+                  Workspace hidden. Choose <em>Code</em> or <em>Notes</em> above.
+                </div>
+              )}
+            </div>
+          </aside>
         </div>
-
-        {/* Minimal Memory Dock (collapsible) */}
-        {showMemory && (
-          <div className="mem-dock">
-            <div className="mem-row">
-              <strong>Memory</strong>
-              <span className="mem-dim">user fact (e.g., <code>name=Vedansh</code>)</span>
-              <input className="mem-input" value={factKV} onChange={e=>setFactKV(e.target.value)} placeholder="key=value" />
-              <button className="mem-btn" onClick={saveFactKV}>Save</button>
-              <button className="mem-btn ghost" onClick={loadFacts}>Reload</button>
-              <button className="mem-btn warn" onClick={clearUserFacts}>Clear User Facts</button>
-            </div>
-
-            <div className="mem-panel">
-              <div className="mem-section">
-                <strong>User Facts</strong>
-                <div className="mem-chips" style={{marginTop:6}}>
-                  {Object.keys(facts.user || {}).length === 0 && <span className="mem-dim">(none)</span>}
-                  {Object.entries(facts.user || {}).map(([k,v])=>(
-                    <span key={k} className="mem-chip">
-                      <code>{k}</code>: {String(v)}
-                      <button className="mem-chip-x" onClick={()=>deleteFact(k)}>✕</button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mem-section">
-                <strong>AI Role (this chat)</strong>{" "}
-                <span className="mem-dim">override instructions for this conversation only</span>
-                <div className="mem-row" style={{marginTop:6}}>
-                  <input className="mem-input" placeholder="e.g., Be a strict DSA tutor" value={roleInput} onChange={e=>setRoleInput(e.target.value)} />
-                  <button className="mem-btn" onClick={saveRole}>Save Role</button>
-                  <button className="mem-btn" onClick={clearRole}>Clear Role</button>
-                  {roleStatus === "saving" && <span className="mem-chip dim">saving…</span>}
-                  {roleStatus === "saved" && <span className="mem-chip ok">saved</span>}
-                  {roleStatus === "cleared" && <span className="mem-chip">cleared</span>}
-                  {roleStatus === "error" && <span className="mem-chip warn">error</span>}
-                </div>
-              </div>
-
-              <div className="mem-section">
-                <strong>Assistant Facts (read-only)</strong>
-                <div className="mem-chips" style={{marginTop:6}}>
-                  {Object.entries(facts.ai || {}).map(([k,v])=>(
-                    <span key={k} className="mem-chip">
-                      <code>{k}</code>: {String(v)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Input */}
-        <form className="helix-input-row" onSubmit={handleSend}>
-          <div className="helix-input-wrapper">
-            <input
-              type="text"
-              className="helix-input"
-              placeholder="Type your prompt for Helix..."
-              value={input}
-              onChange={e => setInput(e.target.value)}
-            />
-            <button
-              type="button"
-              className={`helix-mic-btn ${listening ? "mic-on" : ""}`}
-              title="Voice"
-              onClick={handleMicClick}
-            >
-              <FaMicrophone />
-            </button>
-          </div>
-          <button className="helix-send-btn" type="submit">Send</button>
-        </form>
+        {/* ───────────────── End Workspace ───────────────── */}
 
         <p className="helix-status">Helix AI is running offline on your device.</p>
       </main>

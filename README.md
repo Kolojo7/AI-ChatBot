@@ -24,6 +24,16 @@ Built with **React**, **Prism.js**, and **pure CSS** for a Jarvis-style experien
 ```bash
 git clone https://github.com/yourusername/jarvis-coder.git
 cd jarvis-coder
+
+# set versions
+npm pkg set react=18.2.0 react-dom=18.2.0
+
+# clean & reinstall
+rm -rf node_modules package-lock.json
+npm i
+npm i @uiw/react-codemirror@^4.23.8 @uiw/codemirror-theme-vscode@^4.23.8 \
+      @codemirror/lang-javascript@^6 @codemirror/lang-python@^6 @codemirror/lang-markdown@^6
+
 ````
 
 ---
