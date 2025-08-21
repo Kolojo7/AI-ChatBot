@@ -564,3 +564,41 @@ body {
   text-align: left !important;
   transform: none !important;      /* guard against accidental flips */
 }
+/* Chat rich text polish */
+.helix-msg-bubble .chat-rich h1,
+.helix-msg-bubble .chat-rich h2,
+.helix-msg-bubble .chat-rich h3 {
+  margin: 0 0 6px 0;
+  font-size: 1.05rem;
+  line-height: 1.35;
+  color: var(--text);
+  letter-spacing: .2px;
+}
+
+.helix-msg-bubble .chat-rich p {
+  margin: 0 0 .55em 0;
+  color: var(--text);
+}
+
+.helix-msg-bubble .chat-rich ol,
+.helix-msg-bubble .chat-rich ul {
+  margin: .4em 0 .6em 1.15em;
+  padding: 0;
+}
+
+.helix-msg-bubble .chat-rich li { margin: .2em 0; }
+.chat-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+.mini-link {
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.05);
+  color: var(--text);
+  font-size: .85rem;
+  cursor: pointer;
+}
+.mini-link:hover { border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.08); }

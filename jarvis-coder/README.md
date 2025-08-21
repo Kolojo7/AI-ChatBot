@@ -69,6 +69,11 @@ If you are using **Ollama** as your local LLM backend:
    If using a Node/Express wrapper, run:
 
    ```bash
+   npm i @uiw/react-codemirror @uiw/codemirror-theme-vscode \
+   @codemirror/state @codemirror/view @codemirror/language \
+   @codemirror/lang-javascript @codemirror/lang-python @codemirror/lang-markdown \
+   @codemirror/lang-html @codemirror/lang-json
+
    npm run server
    ```
 

@@ -42,18 +42,117 @@ function CollapsibleCode({ language = "text", code = "" }) {
   );
 }
 
+// Replace the whole renderRichContent with this version
 function renderRichContent(text) {
+  // ——— Keep code fences exactly as-is ———
   const fence = /```(\w+)?\n([\s\S]*?)```/g;
-  const parts = []; let last = 0; let m;
+  const chunks = []; let last = 0; let m;
   while ((m = fence.exec(text)) !== null) {
     const [full, lang = "text", code] = m;
-    if (m.index > last) parts.push(<span key={`t${last}`}>{text.slice(last, m.index)}</span>);
-    parts.push(<CollapsibleCode key={`c${m.index}`} language={lang} code={code} />);
+    if (m.index > last) chunks.push({ kind: "text", data: text.slice(last, m.index) });
+    chunks.push({ kind: "code", data: { lang, code } });
     last = m.index + full.length;
   }
-  if (last < text.length) parts.push(<span key={`tail${last}`}>{text.slice(last)}</span>);
-  return parts.length ? <>{parts}</> : <span>{text}</span>;
+  if (last < text.length) chunks.push({ kind: "text", data: text.slice(last) });
+
+  // Minimal HTML stripper (if LLM sneaks <br> etc)
+  const normalize = (s) => {
+    return String(s || "")
+      .replace(/\r/g, "")
+      .replace(/<(?:br|p|div)\s*\/?>/gi, "\n")
+      .replace(/<\/(?:p|div)>/gi, "\n")
+      .replace(/<[^>]+>/g, "")                // drop any other tags
+      .replace(/[\u202A-\u202E\u2066-\u2069\u200F]/g, "") // bidi controls
+      .replace(/\s+$/g, "")
+  };
+
+  // Turn "1. foo 2. bar 3. baz" (even when inline) into <ol>
+  function renderReadable(block, key) {
+    const raw = normalize(block).trim();
+
+    // Optional: drop trailing "ok" the models sometimes add
+    const cleaned = raw.replace(/\s*(?:ok|Okay)\s*$/i, "");
+
+    // If it looks like an inline enumerated list, split it
+    const firstEnum = cleaned.search(/\b1\.\s/);
+    if (firstEnum !== -1 && /\b2\.\s/.test(cleaned.slice(firstEnum))) {
+      const intro = cleaned.slice(0, firstEnum).trim();
+      const listPart = cleaned.slice(firstEnum);
+
+      const items = [];
+      const re = /\b(\d+)\.\s([\s\S]*?)(?=(?:\b\d+\.\s)|$)/g;
+      let mm;
+      while ((mm = re.exec(listPart)) !== null) {
+        items.push(mm[2].trim());
+      }
+
+      return (
+        <div className="chat-rich" key={key}>
+          {intro && <p>{intro}</p>}
+          <ol>
+            {items.map((it, i) => <li key={i}>{it}</li>)}
+          </ol>
+        </div>
+      );
+    }
+
+    // Handle normal markdown-ish bullets/numbered lists on separate lines
+    const lines = cleaned.split("\n").filter(l => l.trim().length > 0);
+
+    // Heading heuristic: a short first line without a period looks like a title
+    let i = 0;
+    const nodes = [];
+    if (lines.length && /^[A-Z].{0,80}$/.test(lines[0]) && !/[.!?]$/.test(lines[0])) {
+      nodes.push(<h3 key={`h-${key}`}>{lines[0]}</h3>);
+      i = 1;
+    }
+
+    // Consume remaining lines into paragraphs/lists
+    while (i < lines.length) {
+      // collect a bullet/numbered block
+      if (/^(\*|-|\u2022|\d+\.)\s+/.test(lines[i])) {
+        const isOL = /^\d+\.\s+/.test(lines[i]);
+        const items = [];
+        while (i < lines.length && /^(\*|-|\u2022|\d+\.)\s+/.test(lines[i])) {
+          items.push(lines[i].replace(/^(\*|-|\u2022|\d+\.)\s+/, "").trim());
+          i++;
+        }
+        nodes.push(
+          isOL ? <ol key={`ol-${i}-${key}`}>{items.map((t, j) => <li key={j}>{t}</li>)}</ol>
+               : <ul key={`ul-${i}-${key}`}>{items.map((t, j) => <li key={j}>{t}</li>)}</ul>
+        );
+        continue;
+      }
+
+      // otherwise accumulate paragraph until blank line
+      const para = [lines[i]]; i++;
+      while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(\*|-|\u2022|\d+\.)\s+/.test(lines[i])) {
+        para.push(lines[i]); i++;
+      }
+      nodes.push(<p key={`p-${i}-${key}`}>{para.join(" ")}</p>);
+    }
+
+    return <div className="chat-rich" key={key}>{nodes}</div>;
+  }
+
+  // Build React output
+  const out = [];
+  chunks.forEach((c, idx) => {
+    if (c.kind === "code") {
+      out.push(
+        <CollapsibleCode
+          key={`code-${idx}`}
+          language={c.data.lang}
+          code={c.data.code}
+        />
+      );
+    } else {
+      out.push(renderReadable(c.data, `t-${idx}`));
+    }
+  });
+  return <>{out}</>;
 }
+
 
 /* ---------- Model -> Visuals ---------- */
 function parseModel(model = "") {
