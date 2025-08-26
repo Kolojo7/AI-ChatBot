@@ -28,6 +28,4 @@ yarn-debug.log*
 yarn-error.log*
 
 # memory 
-chat_memory.json
-fact_memory.json
-vector_memory.json
+server/data/*_memory.json
