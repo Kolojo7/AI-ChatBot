@@ -234,7 +234,7 @@ addRoute("post", "/api/generate", async (req, res) => {
     const model  = pick(req.body, "model", "gemma:7b-instruct");
     const prompt = pick(req.body, "prompt", "");
     const userId = "default";
-    const cid    = "default";
+    const cid    = pick(req.body, "conversationId", "default");
 
     const auto = extractUserFacts(prompt);
     if (Object.keys(auto).length) upsertUserFacts(userId, auto);
@@ -277,7 +277,7 @@ addRoute("post", "/api/stream", async (req, res) => {
     const model   = pick(req.body, "model", "gemma:7b-instruct");
     const message = pick(req.body, "message", "");
     const userId  = "default";
-    const cid     = "default";
+    const cid     = pick(req.body, "conversationId", "default");
 
     const auto = extractUserFacts(message);
     if (Object.keys(auto).length) upsertUserFacts(userId, auto);

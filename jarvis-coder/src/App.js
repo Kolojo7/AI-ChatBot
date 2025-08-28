@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   FaMicrophone, FaRobot, FaCode, FaCopy, FaChevronDown, FaChevronUp, FaSync,
-  FaMoon, FaSun, FaDatabase, FaBolt
+  FaMoon, FaSun, FaDatabase, FaBolt, FaPlus, FaTrash
 } from "react-icons/fa";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -10,7 +10,6 @@ import HelixEditor from "./HelixEditor";
 import NotesEditor from "./NotesEditor";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://127.0.0.1:4000";
-const CONVERSATION_ID = "default";
 
 /* ---------- Small UI bits ---------- */
 function TypingDots() {
@@ -256,8 +255,26 @@ export default function App() {
   const [model, setModel] = useState(savedModel || "deepseek-coder:33b");
   const [confirmedModel, setConfirmedModel] = useState(null);
 
-  // Chat state
-  const [messages, setMessages] = useState([{ type: "ai", content: DEFAULT_GREETING }]);
+    // Chat state with local history
+  const LS_CHATS = "helix:chats";
+  function createChat() {
+    return {
+      id: crypto.randomUUID(),
+      title: "New Chat",
+      messages: [{ type: "ai", content: DEFAULT_GREETING }],
+    };
+  }
+  function loadChats() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LS_CHATS));
+      return Array.isArray(raw) && raw.length ? raw : [createChat()];
+    } catch {
+      return [createChat()];
+    }
+  }
+  const [chats, setChats] = useState(loadChats);
+  const [conversationId, setConversationId] = useState(chats[0].id);
+  const [messages, setMessages] = useState(chats[0].messages);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
@@ -278,6 +295,34 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem("helix:model", model); }, [model]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
+    useEffect(() => {
+    localStorage.setItem(LS_CHATS, JSON.stringify(chats));
+  }, [chats]);
+  useEffect(() => {
+    const chat = chats.find(c => c.id === conversationId);
+    setMessages(chat ? chat.messages : []);
+  }, [conversationId]);
+  useEffect(() => {
+    setChats(cs => cs.map(c => c.id === conversationId ? { ...c, messages } : c));
+  }, [messages, conversationId]);
+
+  function newChat() {
+    const c = createChat();
+    setChats(cs => [...cs, c]);
+    setConversationId(c.id);
+  }
+  function deleteChat(id) {
+    setChats(cs => {
+      const filtered = cs.filter(c => c.id !== id);
+      if (!filtered.length) {
+        const nc = createChat();
+        setConversationId(nc.id);
+        return [nc];
+      }
+      if (id === conversationId) setConversationId(filtered[0].id);
+      return filtered;
+    });
+  }
 
   /* ---------------- models list ---------------- */
   async function refreshModels() {
@@ -342,7 +387,7 @@ export default function App() {
   /* ---------------- role APIs (per chat) ---------------- */
   async function loadRole() {
     try {
-      const res = await fetch(`${API_BASE}/api/memory/ai-role?conversationId=${encodeURIComponent(CONVERSATION_ID)}`);
+      const res = await fetch(`${API_BASE}/api/memory/ai-role?conversationId=${encodeURIComponent(conversationId)}`);
       const text = await res.text();
       let j = {};
       try { j = JSON.parse(text); } catch { j = {}; }
@@ -358,7 +403,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: CONVERSATION_ID, role: roleInput })
+        body: JSON.stringify({ conversationId, role: roleInput })
       });
       const text = await res.text();
       if (!res.ok) throw new Error(text || res.statusText);
@@ -380,7 +425,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: CONVERSATION_ID })
+        body: JSON.stringify({ conversationId })
       });
       const text = await res.text();
       if (!res.ok) throw new Error(text || res.statusText);
@@ -394,30 +439,36 @@ export default function App() {
     }
   }
 
-  /* --------- Load facts and role on mount (also fixes ESLint unused warn) --------- */
+  /* --------- Load facts and role on mount --------- */
   useEffect(() => {
     loadFacts();
-    loadRole();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => {
+    loadRole();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
 
   /* ---------------- send prompt ---------------- */
   async function sendPrompt(userPrompt) {
     setLoading(true);
     setMessages((prev) => [...prev, { type: "user", content: userPrompt }, { type: "ai", content: "" }]);
+    if (chats.find(c => c.id === conversationId)?.title === "New Chat") {
+      setChats(cs => cs.map(c => c.id === conversationId ? { ...c, title: userPrompt.slice(0, 30) } : c));
+    }
 
     try {
       const res = await fetch(`${API_BASE}/api/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userPrompt, model, conversationId: CONVERSATION_ID })
+        body: JSON.stringify({ message: userPrompt, model, conversationId })
       });
 
       if (!res.ok || !res.body) {
         const nr = await fetch(`${API_BASE}/api/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: userPrompt, model, conversationId: CONVERSATION_ID })
+          body: JSON.stringify({ prompt: userPrompt, model, conversationId })
         });
         const nd = await nr.json();
         if (nd?.data?.model) setConfirmedModel(nd.data.model);
@@ -596,6 +647,17 @@ export default function App() {
         </div>
         <div className="helix-sidebar-btns">
           <button className="helix-btn" title="Code"><FaCode /></button>
+        </div>
+        <div className="helix-chat-list">
+          <button className="helix-mini-btn helix-new-chat" onClick={newChat}><FaPlus/> New Chat</button>
+          <ul>
+            {chats.map(c => (
+              <li key={c.id} className={`helix-chat-item ${c.id === conversationId ? "active" : ""}`}>
+                <button onClick={() => setConversationId(c.id)}>{c.title || "New Chat"}</button>
+                <span className="helix-chat-del" onClick={(e) => { e.stopPropagation(); deleteChat(c.id); }}><FaTrash/></span>
+              </li>
+            ))}
+          </ul>
         </div>
         <div className="helix-theme-toggle">
           <button
