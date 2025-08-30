@@ -103,6 +103,11 @@ ollama list
 
 ```bash
 cd server
+node -v              # if < 18, upgrade
+# with nvm
+nvm install 20
+nvm use 20
+
 npm run server
 ```
 
