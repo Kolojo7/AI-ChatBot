@@ -4,6 +4,7 @@ import cors from "cors";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import * as cheerio from "cheerio";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -184,6 +185,48 @@ addRoute("get", "/api/models", async (_, res) => {
     res.json({ ok: true, models });
   } catch (e) {
     res.json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// +++ Web Search (key-free)
+async function searchDDG(query) {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      }
+    });
+    if (!res.ok) throw new Error(`DDG status ${res.status}`);
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const results = [];
+    $("div.result").each((i, el) => {
+      if (results.length >= 5) return; // Limit to 5 results
+      const title = $(el).find("h2.result__title > a.result__a").text().trim();
+      const link = $(el).find("a.result__url").attr("href");
+      const snippet = $(el).find("a.result__snippet").text().trim();
+      if (title && link && snippet) {
+        results.push({ title, link, snippet });
+      }
+    });
+    return results;
+  } catch (e) {
+    console.error(`[searchDDG] failed for query "${query}":`, e);
+    return []; // Return empty on failure to be resilient
+  }
+}
+
+addRoute("post", "/api/search", async (req, res) => {
+  try {
+    const query = pick(req.body, "query", "");
+    if (!query) return res.json({ ok: false, error: "query required" });
+    // This setup is resilient; if DDG fails, it returns [], which the front-end handles.
+    // Could be extended to try another source if searchDDG returns an empty array.
+    const results = await searchDDG(query);
+    res.json({ ok: true, results });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

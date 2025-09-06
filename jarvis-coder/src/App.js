@@ -255,7 +255,7 @@ export default function App() {
   const [model, setModel] = useState(savedModel || "deepseek-coder:33b");
   const [confirmedModel, setConfirmedModel] = useState(null);
 
-    // Chat state with local history
+  // Chat state with local history
   const LS_CHATS = "helix:chats";
   function createChat() {
     return {
@@ -274,10 +274,28 @@ export default function App() {
   }
   const [chats, setChats] = useState(loadChats);
   const [conversationId, setConversationId] = useState(chats[0].id);
-  const [messages, setMessages] = useState(chats[0].messages);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
+
+  // Get the active chat's messages. This is now derived state, not a separate state.
+  const messages = useMemo(() => {
+    return (chats.find(c => c.id === conversationId) || chats[0] || {messages: []}).messages;
+  }, [chats, conversationId]);
+
+  // Update the messages for the current chat
+  const setMessages = (updater) => {
+    setChats(currentChats => {
+      return currentChats.map(chat => {
+        if (chat.id === conversationId) {
+          const newMessages = typeof updater === 'function' ? updater(chat.messages) : updater;
+          return { ...chat, messages: newMessages };
+        }
+        return chat;
+      });
+    });
+  };
+
 
   // Memory UI toggle
   const [showMemory, setShowMemory] = useState(false);
@@ -295,22 +313,16 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem("helix:model", model); }, [model]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
-    useEffect(() => {
+  useEffect(() => {
     localStorage.setItem(LS_CHATS, JSON.stringify(chats));
   }, [chats]);
-  useEffect(() => {
-    const chat = chats.find(c => c.id === conversationId);
-    setMessages(chat ? chat.messages : []);
-  }, [conversationId]);
-  useEffect(() => {
-    setChats(cs => cs.map(c => c.id === conversationId ? { ...c, messages } : c));
-  }, [messages, conversationId]);
 
   function newChat() {
     const c = createChat();
     setChats(cs => [...cs, c]);
     setConversationId(c.id);
   }
+
   function deleteChat(id) {
     setChats(cs => {
       const filtered = cs.filter(c => c.id !== id);
@@ -319,7 +331,9 @@ export default function App() {
         setConversationId(nc.id);
         return [nc];
       }
-      if (id === conversationId) setConversationId(filtered[0].id);
+      if (id === conversationId) {
+        setConversationId(filtered[0].id);
+      }
       return filtered;
     });
   }
@@ -371,7 +385,7 @@ export default function App() {
     await fetch(`${API_BASE}/api/memory/facts`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "default", bucket: "user", key })
+      body: JSON.stringify({ userId: "default", key })
     });
     await loadFacts();
   }
@@ -379,7 +393,7 @@ export default function App() {
     await fetch(`${API_BASE}/api/memory/facts`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "default", bucket: "user", all: true })
+      body: JSON.stringify({ userId: "default", all: true })
     });
     await loadFacts();
   }
@@ -442,98 +456,88 @@ export default function App() {
   /* --------- Load facts and role on mount --------- */
   useEffect(() => {
     loadFacts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     loadRole();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
 
-  /* ---------------- send prompt ---------------- */
-  async function sendPrompt(userPrompt) {
+  /* ---------------- send prompt & search ---------------- */
+  // Extracted stream logic to be reusable
+  async function streamResponse(fullPrompt) {
     setLoading(true);
-    setMessages((prev) => [...prev, { type: "user", content: userPrompt }, { type: "ai", content: "" }]);
-    if (chats.find(c => c.id === conversationId)?.title === "New Chat") {
-      setChats(cs => cs.map(c => c.id === conversationId ? { ...c, title: userPrompt.slice(0, 30) } : c));
-    }
-
     try {
       const res = await fetch(`${API_BASE}/api/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userPrompt, model, conversationId })
+        body: JSON.stringify({ message: fullPrompt, model, conversationId })
       });
 
-      if (!res.ok || !res.body) {
-        const nr = await fetch(`${API_BASE}/api/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: userPrompt, model, conversationId })
+      if (!res.ok || !res.body) throw new Error("Streaming not available.");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let aiText = "";
+      let buf = "";
+
+      const updateLastMessage = (s) => {
+        aiText += s;
+        setMessages((prev) => {
+          const c = [...prev];
+          if (c.length > 0) c[c.length - 1] = { type: "ai", content: aiText };
+          return c;
         });
-        const nd = await nr.json();
-        if (nd?.data?.model) setConfirmedModel(nd.data.model);
-        const reply = nd?.data?.response || nd?.data?.message || "(no response)";
-        setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: reply }; return c; });
-      } else {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let aiText = "";
-        let buf = "";
+      };
 
-        const putAI = (s) => {
-          aiText += s;
-          setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: aiText }; return c; });
-        };
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop();
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-
-          const frames = buf.split("\n\n");
-          buf = frames.pop();
-
-          for (const frame of frames) {
-            const lines = frame.split("\n");
-            const first = (lines[0] || "").trim();
-
-            if (first.startsWith("event: meta")) {
-              const dataLine = lines.find(l => l.startsWith("data:"));
-              if (dataLine) {
-                try {
-                  const meta = JSON.parse(dataLine.slice(5));
-                  if (meta?.model) setConfirmedModel(meta.model);
-                } catch {}
-              }
-              continue;
-            }
-            if (first.startsWith("event: error")) {
-              const dataLine = lines.find(l => l.startsWith("data:"));
-              const msg = dataLine ? dataLine.slice(5).trim() : "Unknown stream error";
-              putAI(`\n[error] ${msg}`);
-              continue;
-            }
-
-            for (const l of lines) {
-              if (!l.startsWith("data:")) continue;
-              const payload = l.slice(5).trim();
-              try {
-                const json = JSON.parse(payload);
-                if (json && typeof json.token === "string") {
-                  putAI(json.token);
-                  continue;
-                }
-              } catch {}
-              if (payload) putAI(payload);
+        for (const frame of frames) {
+          const lines = frame.split("\n");
+          const first = (lines[0] || "").trim();
+          if (first.startsWith("event: meta")) {
+            const dataLine = lines.find(l => l.startsWith("data:"));
+            if (dataLine) try { setConfirmedModel(JSON.parse(dataLine.slice(5)).model); } catch {}
+            continue;
+          }
+          if (first.startsWith("event: error")) {
+            const dataLine = lines.find(l => l.startsWith("data:"));
+            updateLastMessage(`\n[error] ${dataLine ? dataLine.slice(5).trim() : "Stream error"}`);
+            continue;
+          }
+          for (const l of lines) {
+            if (!l.startsWith("data:")) continue;
+            const payload = l.slice(5).trim();
+            try {
+              const json = JSON.parse(payload);
+              if (json?.token) updateLastMessage(json.token);
+            } catch {
+              if (payload) updateLastMessage(payload);
             }
           }
         }
       }
     } catch (e) {
-      setMessages((prev) => { const c=[...prev]; c[c.length-1]={ type:"ai", content: "Error: " + String(e) }; return c; });
+      setMessages((prev) => {
+        const c = [...prev];
+        if (c.length > 0) c[c.length - 1] = { type: "ai", content: "Error: " + String(e.message) };
+        return c;
+      });
     } finally {
       setLoading(false);
     }
+  }
+
+  async function sendPrompt(userPrompt) {
+    setMessages((prev) => [...prev, { type: "user", content: userPrompt }, { type: "ai", content: "" }]);
+    if (chats.find(c => c.id === conversationId)?.title === "New Chat") {
+      setChats(cs => cs.map(c => c.id === conversationId ? { ...c, title: userPrompt.slice(0, 30) } : c));
+    }
+    await streamResponse(userPrompt);
   }
 
   // mic (optional)
@@ -552,24 +556,64 @@ export default function App() {
   const [activePanel, setActivePanel] = useState("code"); // "code" | "notes" | "hidden"
   const notesRef = useRef(null);
 
-  const handleSend = (e) => {
+  const handleSend = async (e) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    const prompt = input.trim();
+    if (!prompt) return;
+    setInput(""); // Clear input immediately
+
+    // Slash command: /search <query>
+    if (prompt.toLowerCase().startsWith("/search ")) {
+      const query = prompt.substring(8).trim();
+      setMessages(prev => [...prev, { type: 'user', content: prompt }, { type: 'ai', content: `*Searching for: ${query}...*` }]);
+      setLoading(true);
+
+      try {
+        const searchRes = await fetch(`${API_BASE}/api/search`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query })
+        });
+        const searchData = await searchRes.json();
+
+        if (!searchData.ok || !searchData.results?.length) {
+          throw new Error(searchData.error || "No web results found.");
+        }
+        
+        setMessages(prev => {
+          const msgs = [...prev];
+          msgs[msgs.length - 1].content = `*Found ${searchData.results.length} results. Synthesizing answer...*`;
+          return msgs;
+        });
+
+        const context = searchData.results
+          .map((r, i) => `[${i + 1}] ${r.title}\nSnippet: ${r.snippet}\nURL: ${r.link}`)
+          .join("\n\n");
+        
+        const augmentedPrompt = `Please provide a comprehensive answer to the user's question based on the following search results. You must cite the most relevant sources using markdown links, like [Source 1](URL). Synthesize the information into a coherent response. Do not list the sources at the end; integrate them naturally into your answer.\n\nUser Question: ${query}\n\nSearch Results:\n${context}`;
+        
+        await streamResponse(augmentedPrompt);
+      } catch (err) {
+        setMessages(prev => {
+          const msgs = [...prev];
+          msgs[msgs.length - 1].content = `Search failed: ${err.message}`;
+          return msgs;
+        });
+        setLoading(false);
+      }
+      return;
+    }
 
     // Slash command: /notes [optional title]
-    if (input.trim().toLowerCase().startsWith("/notes")) {
-      const title = input.replace(/^\/notes\s*/i, "").trim();
+    if (prompt.toLowerCase().startsWith("/notes")) {
+      const title = prompt.replace(/^\/notes\s*/i, "").trim();
       setActivePanel("notes");
       setTimeout(() => {
         notesRef.current?.createNote(title || "New Note");
         notesRef.current?.focus();
       }, 0);
-      setInput("");
       return;
     }
 
-    sendPrompt(input.trim());
-    setInput("");
+    sendPrompt(prompt);
   };
 
   // suggestions
@@ -828,7 +872,7 @@ export default function App() {
                 <input
                   type="text"
                   className="helix-input"
-                  placeholder="Type your prompt for Helix...  (tip: /notes Project Plan)"
+                  placeholder="Type your prompt... (tip: /search or /notes)"
                   value={input}
                   onChange={e => setInput(e.target.value)}
                 />
