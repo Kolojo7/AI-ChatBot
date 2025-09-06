@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"; // useCallback added
 import {
   FaMicrophone, FaRobot, FaCode, FaCopy, FaChevronDown, FaChevronUp, FaSync,
   FaMoon, FaSun, FaDatabase, FaBolt, FaPlus, FaTrash
 } from "react-icons/fa";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import ReactMarkdown from 'react-markdown';
 import "./Helix.css";
 import HelixEditor from "./HelixEditor";
 import NotesEditor from "./NotesEditor";
@@ -41,115 +42,39 @@ function CollapsibleCode({ language = "text", code = "" }) {
   );
 }
 
-// Replace the whole renderRichContent with this version
 function renderRichContent(text) {
-  // ——— Keep code fences exactly as-is ———
   const fence = /```(\w+)?\n([\s\S]*?)```/g;
-  const chunks = []; let last = 0; let m;
+  const chunks = [];
+  let last = 0;
+  let m;
   while ((m = fence.exec(text)) !== null) {
     const [full, lang = "text", code] = m;
-    if (m.index > last) chunks.push({ kind: "text", data: text.slice(last, m.index) });
+    if (m.index > last) {
+      chunks.push({ kind: "text", data: text.slice(last, m.index) });
+    }
     chunks.push({ kind: "code", data: { lang, code } });
     last = m.index + full.length;
   }
-  if (last < text.length) chunks.push({ kind: "text", data: text.slice(last) });
-
-  // Minimal HTML stripper (if LLM sneaks <br> etc)
-  const normalize = (s) => {
-    return String(s || "")
-      .replace(/\r/g, "")
-      .replace(/<(?:br|p|div)\s*\/?>/gi, "\n")
-      .replace(/<\/(?:p|div)>/gi, "\n")
-      .replace(/<[^>]+>/g, "")                // drop any other tags
-      .replace(/[\u202A-\u202E\u2066-\u2069\u200F]/g, "") // bidi controls
-      .replace(/\s+$/g, "")
-  };
-
-  // Turn "1. foo 2. bar 3. baz" (even when inline) into <ol>
-  function renderReadable(block, key) {
-    const raw = normalize(block).trim();
-
-    // Optional: drop trailing "ok" the models sometimes add
-    const cleaned = raw.replace(/\s*(?:ok|Okay)\s*$/i, "");
-
-    // If it looks like an inline enumerated list, split it
-    const firstEnum = cleaned.search(/\b1\.\s/);
-    if (firstEnum !== -1 && /\b2\.\s/.test(cleaned.slice(firstEnum))) {
-      const intro = cleaned.slice(0, firstEnum).trim();
-      const listPart = cleaned.slice(firstEnum);
-
-      const items = [];
-      const re = /\b(\d+)\.\s([\s\S]*?)(?=(?:\b\d+\.\s)|$)/g;
-      let mm;
-      while ((mm = re.exec(listPart)) !== null) {
-        items.push(mm[2].trim());
-      }
-
-      return (
-        <div className="chat-rich" key={key}>
-          {intro && <p>{intro}</p>}
-          <ol>
-            {items.map((it, i) => <li key={i}>{it}</li>)}
-          </ol>
-        </div>
-      );
-    }
-
-    // Handle normal markdown-ish bullets/numbered lists on separate lines
-    const lines = cleaned.split("\n").filter(l => l.trim().length > 0);
-
-    // Heading heuristic: a short first line without a period looks like a title
-    let i = 0;
-    const nodes = [];
-    if (lines.length && /^[A-Z].{0,80}$/.test(lines[0]) && !/[.!?]$/.test(lines[0])) {
-      nodes.push(<h3 key={`h-${key}`}>{lines[0]}</h3>);
-      i = 1;
-    }
-
-    // Consume remaining lines into paragraphs/lists
-    while (i < lines.length) {
-      // collect a bullet/numbered block
-      if (/^(\*|-|\u2022|\d+\.)\s+/.test(lines[i])) {
-        const isOL = /^\d+\.\s+/.test(lines[i]);
-        const items = [];
-        while (i < lines.length && /^(\*|-|\u2022|\d+\.)\s+/.test(lines[i])) {
-          items.push(lines[i].replace(/^(\*|-|\u2022|\d+\.)\s+/, "").trim());
-          i++;
-        }
-        nodes.push(
-          isOL ? <ol key={`ol-${i}-${key}`}>{items.map((t, j) => <li key={j}>{t}</li>)}</ol>
-               : <ul key={`ul-${i}-${key}`}>{items.map((t, j) => <li key={j}>{t}</li>)}</ul>
-        );
-        continue;
-      }
-
-      // otherwise accumulate paragraph until blank line
-      const para = [lines[i]]; i++;
-      while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(\*|-|\u2022|\d+\.)\s+/.test(lines[i])) {
-        para.push(lines[i]); i++;
-      }
-      nodes.push(<p key={`p-${i}-${key}`}>{para.join(" ")}</p>);
-    }
-
-    return <div className="chat-rich" key={key}>{nodes}</div>;
+  if (last < text.length) {
+    chunks.push({ kind: "text", data: text.slice(last) });
   }
 
-  // Build React output
-  const out = [];
-  chunks.forEach((c, idx) => {
-    if (c.kind === "code") {
-      out.push(
-        <CollapsibleCode
-          key={`code-${idx}`}
-          language={c.data.lang}
-          code={c.data.code}
-        />
-      );
-    } else {
-      out.push(renderReadable(c.data, `t-${idx}`));
-    }
-  });
-  return <>{out}</>;
+  return (
+    <div className="chat-rich">
+      {chunks.map((c, idx) => {
+        if (c.kind === "code") {
+          return (
+            <CollapsibleCode
+              key={`code-${idx}`}
+              language={c.data.lang}
+              code={c.data.code}
+            />
+          );
+        }
+        return <ReactMarkdown key={`md-${idx}`}>{c.data}</ReactMarkdown>;
+      })}
+    </div>
+  );
 }
 
 
@@ -399,7 +324,7 @@ export default function App() {
   }
 
   /* ---------------- role APIs (per chat) ---------------- */
-  async function loadRole() {
+  const loadRole = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/memory/ai-role?conversationId=${encodeURIComponent(conversationId)}`);
       const text = await res.text();
@@ -409,7 +334,8 @@ export default function App() {
       setRoleSaved(role);
       setRoleInput(role);
     } catch (e) {}
-  }
+  }, [conversationId]);
+
   async function saveRole() {
     if (!roleInput.trim()) return clearRole();
     setRoleStatus("saving");
@@ -457,10 +383,10 @@ export default function App() {
   useEffect(() => {
     loadFacts();
   }, []);
+  
   useEffect(() => {
     loadRole();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId]);
+  }, [conversationId, loadRole]); // FIXED DEPENDENCY
 
   /* ---------------- send prompt & search ---------------- */
   // Extracted stream logic to be reusable

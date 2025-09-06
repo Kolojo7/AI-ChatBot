@@ -611,3 +611,63 @@ body {
   cursor: pointer;
 }
 .mini-link:hover { border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.08); }
+
+
+/* ===== Enhanced Chat Readability ===== */
+
+/* --- General Bubble Improvements --- */
+.helix-msg-bubble.ai {
+  font-size: 1.05rem; /* Slightly larger base font size */
+  line-height: 1.6;   /* More space between lines */
+}
+
+/* --- Clear, Prominent Headings --- */
+.helix-msg-bubble .chat-rich h3 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--accent-soft); /* Use a soft accent color to stand out */
+  margin: 1.25em 0 0.75em 0; /* Add more space above and below headings */
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1); /* A subtle separator line */
+}
+/* Add extra space only if the heading is not the very first element */
+.helix-msg-bubble .chat-rich h3:first-child {
+  margin-top: 0.25em;
+}
+
+
+/* --- Better Spacing for Paragraphs --- */
+.helix-msg-bubble .chat-rich p {
+  margin-bottom: 1em; /* Consistent spacing after each paragraph */
+}
+
+/* --- More Readable Lists --- */
+.helix-msg-bubble .chat-rich ol,
+.helix-msg-bubble .chat-rich ul {
+  margin: 0.5em 0 1em 1.5em; /* Indent lists slightly more */
+  padding: 0;
+}
+
+.helix-msg-bubble .chat-rich li {
+  margin-bottom: 0.6em; /* Add vertical space between list items */
+  padding-left: 0.4em;
+}
+
+/* --- Improved Spacing for Code Blocks --- */
+.helix-msg-bubble .helix-code-wrap {
+  margin-top: 1.25em;
+  margin-bottom: 1.25em;
+}
+
+/* --- Clear Styling for Links --- */
+.helix-msg-bubble a {
+  color: var(--accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 500;
+  transition: color 0.15s ease;
+}
+
+.helix-msg-bubble a:hover {
+  color: var(--text);
+}
