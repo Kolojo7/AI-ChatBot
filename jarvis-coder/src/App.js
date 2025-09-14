@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from "react"; // useCallback added
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   FaMicrophone, FaRobot, FaCode, FaCopy, FaChevronDown, FaChevronUp, FaSync,
-  FaMoon, FaSun, FaDatabase, FaBolt, FaPlus, FaTrash
+  FaMoon, FaSun, FaDatabase, FaBolt, FaPlus, FaTrash, 
+  FaPaperclip, FaTimes // +++ Add new icons
 } from "react-icons/fa";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -12,7 +13,7 @@ import NotesEditor from "./NotesEditor";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://127.0.0.1:4000";
 
-/* ---------- Small UI bits ---------- */
+/* ... (CollapsibleCode, TypingDots, renderRichContent, parseModel, getModelVisual, HelixCore, PowerBadge functions are unchanged) ... */
 function TypingDots() {
   return <span className="typing-dots"><span>.</span><span>.</span><span>.</span></span>;
 }
@@ -148,13 +149,13 @@ function HelixCore({ spinning, colors, speed }) {
 function PowerBadge({ tierLabel }) {
   return <span className="helix-badge power"><FaBolt/> Power: <strong>{tierLabel}</strong></span>;
 }
-
 /* ---------- App ---------- */
 export default function App() {
   const DEFAULT_GREETING = "Hello, I am Helix. How can I assist you with your code today?";
   const bottomRef = useRef(null);
+  const fileInputRef = useRef(null); // +++ Add ref for file input
 
-  // Theme
+  // ... (theme, MODEL_INFO, installed models state is unchanged) ...
   const [theme, setTheme] = useState(() => localStorage.getItem("helix:theme") || "deep");
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -202,8 +203,8 @@ export default function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
-
-  // Get the active chat's messages. This is now derived state, not a separate state.
+  const [file, setFile] = useState(null); // +++ Add state for the attached file
+  
   const messages = useMemo(() => {
     return (chats.find(c => c.id === conversationId) || chats[0] || {messages: []}).messages;
   }, [chats, conversationId]);
@@ -221,182 +222,161 @@ export default function App() {
     });
   };
 
-
-  // Memory UI toggle
-  const [showMemory, setShowMemory] = useState(false);
-
-  // Minimal memory (facts)
-  const [facts, setFacts] = useState({ user: {}, ai: {} });
-  const [factKV, setFactKV] = useState(""); // "key=value" quick-add
-
-  // AI role (per chat)
-  const [roleInput, setRoleInput] = useState("");
-  const [roleSaved, setRoleSaved] = useState("");
-  const [roleStatus, setRoleStatus] = useState(""); // transient visual feedback
-
-  const visuals = useMemo(() => getModelVisual(model), [model]);
-
-  useEffect(() => { localStorage.setItem("helix:model", model); }, [model]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
-  useEffect(() => {
-    localStorage.setItem(LS_CHATS, JSON.stringify(chats));
-  }, [chats]);
-
-  function newChat() {
-    const c = createChat();
-    setChats(cs => [...cs, c]);
-    setConversationId(c.id);
-  }
-
-  function deleteChat(id) {
-    setChats(cs => {
-      const filtered = cs.filter(c => c.id !== id);
-      if (!filtered.length) {
-        const nc = createChat();
-        setConversationId(nc.id);
-        return [nc];
-      }
-      if (id === conversationId) {
-        setConversationId(filtered[0].id);
-      }
-      return filtered;
-    });
-  }
-
-  /* ---------------- models list ---------------- */
-  async function refreshModels() {
-    setLoadingModels(true); setModelsErr("");
-    try {
-      const resp = await fetch(`${API_BASE}/api/models`);
-      const text = await resp.text();
-      if (text.trim().startsWith("<")) throw new Error("Got HTML from server. Check REACT_APP_API_BASE.");
-      const data = JSON.parse(text);
-      if (!data.ok) throw new Error(data.error || "Failed to load");
-      setInstalled(Array.isArray(data.models) ? data.models : []);
-    } catch (e) {
-      setInstalled([]);
-      setModelsErr(String(e?.message || e));
-    } finally {
-      setLoadingModels(false);
+  // ... (memory, facts, and role states are unchanged) ...
+    const [showMemory, setShowMemory] = useState(false);
+    const [facts, setFacts] = useState({ user: {}, ai: {} });
+    const [factKV, setFactKV] = useState(""); // "key=value" quick-add
+    const [roleInput, setRoleInput] = useState("");
+    const [roleSaved, setRoleSaved] = useState("");
+    const [roleStatus, setRoleStatus] = useState(""); // transient visual feedback
+    const visuals = useMemo(() => getModelVisual(model), [model]);
+    useEffect(() => { localStorage.setItem("helix:model", model); }, [model]);
+    useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
+    useEffect(() => {
+        localStorage.setItem(LS_CHATS, JSON.stringify(chats));
+    }, [chats]);
+    function newChat() {
+        const c = createChat();
+        setChats(cs => [...cs, c]);
+        setConversationId(c.id);
     }
-  }
-  useEffect(() => { refreshModels(); }, []);
+    function deleteChat(id) {
+        setChats(cs => {
+        const filtered = cs.filter(c => c.id !== id);
+        if (!filtered.length) {
+            const nc = createChat();
+            setConversationId(nc.id);
+            return [nc];
+        }
+        if (id === conversationId) {
+            setConversationId(filtered[0].id);
+        }
+        return filtered;
+        });
+    }
 
-  const installedSet = useMemo(() => new Set(installed.map(n => n.trim().toLowerCase())), [installed]);
-  const isInstalled = (name) => installedSet.has((name || "").trim().toLowerCase());
-
-  /* ---------------- facts APIs ---------------- */
-  async function loadFacts() {
-    try {
-      const r = await fetch(`${API_BASE}/api/memory/facts?userId=default`);
-      const j = await r.json();
-      if (j.ok) setFacts(j.facts || { user: {}, ai: {} });
-    } catch {}
-  }
-  async function saveFactKV() {
-    const raw = String(factKV || "");
-    const [k, ...rest] = raw.split("=");
-    const v = rest.join("=");
-    if (!k || !v) return;
-    await fetch(`${API_BASE}/api/memory/facts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "default", facts: { [k.trim()]: v.trim() } })
-    });
-    setFactKV("");
-    await loadFacts();
-  }
-  async function deleteFact(key) {
-    await fetch(`${API_BASE}/api/memory/facts`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "default", key })
-    });
-    await loadFacts();
-  }
-  async function clearUserFacts() {
-    await fetch(`${API_BASE}/api/memory/facts`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: "default", all: true })
-    });
-    await loadFacts();
-  }
-
-  /* ---------------- role APIs (per chat) ---------------- */
-  const loadRole = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/memory/ai-role?conversationId=${encodeURIComponent(conversationId)}`);
-      const text = await res.text();
-      let j = {};
-      try { j = JSON.parse(text); } catch { j = {}; }
-      const role = j?.role || "";
-      setRoleSaved(role);
-      setRoleInput(role);
-    } catch (e) {}
-  }, [conversationId]);
-
-  async function saveRole() {
-    if (!roleInput.trim()) return clearRole();
-    setRoleStatus("saving");
-    try {
-      const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
+  // ... (refreshModels, facts APIs, role APIs are unchanged) ...
+    async function refreshModels() {
+        setLoadingModels(true); setModelsErr("");
+        try {
+        const resp = await fetch(`${API_BASE}/api/models`);
+        const text = await resp.text();
+        if (text.trim().startsWith("<")) throw new Error("Got HTML from server. Check REACT_APP_API_BASE.");
+        const data = JSON.parse(text);
+        if (!data.ok) throw new Error(data.error || "Failed to load");
+        setInstalled(Array.isArray(data.models) ? data.models : []);
+        } catch (e) {
+        setInstalled([]);
+        setModelsErr(String(e?.message || e));
+        } finally {
+        setLoadingModels(false);
+        }
+    }
+    useEffect(() => { refreshModels(); }, []);
+    const installedSet = useMemo(() => new Set(installed.map(n => n.trim().toLowerCase())), [installed]);
+    const isInstalled = (name) => installedSet.has((name || "").trim().toLowerCase());
+    async function loadFacts() {
+        try {
+        const r = await fetch(`${API_BASE}/api/memory/facts?userId=default`);
+        const j = await r.json();
+        if (j.ok) setFacts(j.facts || { user: {}, ai: {} });
+        } catch {}
+    }
+    async function saveFactKV() {
+        const raw = String(factKV || "");
+        const [k, ...rest] = raw.split("=");
+        const v = rest.join("=");
+        if (!k || !v) return;
+        await fetch(`${API_BASE}/api/memory/facts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId, role: roleInput })
-      });
-      const text = await res.text();
-      if (!res.ok) throw new Error(text || res.statusText);
-      let j = {};
-      try { j = JSON.parse(text); } catch { j = {}; }
-      const role = j?.role ?? j?.data?.role ?? "";
-      if (typeof role !== "string") throw new Error("Bad server response");
-      setRoleSaved(role);
-      setRoleStatus("saved");
-    } catch (e) {
-      setRoleStatus("error");
-    } finally {
-      setTimeout(() => setRoleStatus(""), 1200);
+        body: JSON.stringify({ userId: "default", facts: { [k.trim()]: v.trim() } })
+        });
+        setFactKV("");
+        await loadFacts();
     }
-  }
-  async function clearRole() {
-    setRoleStatus("saving");
-    try {
-      const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
+    async function deleteFact(key) {
+        await fetch(`${API_BASE}/api/memory/facts`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId })
-      });
-      const text = await res.text();
-      if (!res.ok) throw new Error(text || res.statusText);
-      setRoleSaved("");
-      setRoleInput("");
-      setRoleStatus("cleared");
-    } catch (e) {
-      setRoleStatus("error");
-    } finally {
-      setTimeout(() => setRoleStatus(""), 1200);
+        body: JSON.stringify({ userId: "default", key })
+        });
+        await loadFacts();
     }
-  }
-
-  /* --------- Load facts and role on mount --------- */
-  useEffect(() => {
-    loadFacts();
-  }, []);
-  
-  useEffect(() => {
-    loadRole();
-  }, [conversationId, loadRole]); // FIXED DEPENDENCY
+    async function clearUserFacts() {
+        await fetch(`${API_BASE}/api/memory/facts`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: "default", all: true })
+        });
+        await loadFacts();
+    }
+    const loadRole = useCallback(async () => {
+        try {
+        const res = await fetch(`${API_BASE}/api/memory/ai-role?conversationId=${encodeURIComponent(conversationId)}`);
+        const text = await res.text();
+        let j = {};
+        try { j = JSON.parse(text); } catch { j = {}; }
+        const role = j?.role || "";
+        setRoleSaved(role);
+        setRoleInput(role);
+        } catch (e) {}
+    }, [conversationId]);
+    async function saveRole() {
+        if (!roleInput.trim()) return clearRole();
+        setRoleStatus("saving");
+        try {
+        const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conversationId, role: roleInput })
+        });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || res.statusText);
+        let j = {};
+        try { j = JSON.parse(text); } catch { j = {}; }
+        const role = j?.role ?? j?.data?.role ?? "";
+        if (typeof role !== "string") throw new Error("Bad server response");
+        setRoleSaved(role);
+        setRoleStatus("saved");
+        } catch (e) {
+        setRoleStatus("error");
+        } finally {
+        setTimeout(() => setRoleStatus(""), 1200);
+        }
+    }
+    async function clearRole() {
+        setRoleStatus("saving");
+        try {
+        const res = await fetch(`${API_BASE}/api/memory/ai-role`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conversationId })
+        });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || res.statusText);
+        setRoleSaved("");
+        setRoleInput("");
+        setRoleStatus("cleared");
+        } catch (e) {
+        setRoleStatus("error");
+        } finally {
+        setTimeout(() => setRoleStatus(""), 1200);
+        }
+    }
+    useEffect(() => { loadFacts(); }, []);
+    useEffect(() => { loadRole(); }, [conversationId, loadRole]);
 
   /* ---------------- send prompt & search ---------------- */
-  // Extracted stream logic to be reusable
-  async function streamResponse(fullPrompt) {
+  // +++ Modified to handle FormData for file uploads
+  async function streamResponse(requestBody) {
     setLoading(true);
     try {
+      const isFormData = requestBody instanceof FormData;
       const res = await fetch(`${API_BASE}/api/stream`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: fullPrompt, model, conversationId })
+        headers: isFormData ? {} : { "Content-Type": "application/json" },
+        body: isFormData ? requestBody : JSON.stringify(requestBody),
       });
 
       if (!res.ok || !res.body) throw new Error("Streaming not available.");
@@ -458,38 +438,60 @@ export default function App() {
     }
   }
 
-  async function sendPrompt(userPrompt) {
-    setMessages((prev) => [...prev, { type: "user", content: userPrompt }, { type: "ai", content: "" }]);
+  // +++ Modified to handle an optional file attachment
+  async function sendPrompt(userPrompt, attachedFile = null) {
+    let displayPrompt = userPrompt;
+    if (attachedFile) {
+        displayPrompt = `${userPrompt}\n\n*Attached file: ${attachedFile.name}*`;
+    }
+
+    setMessages((prev) => [...prev, { type: "user", content: displayPrompt }, { type: "ai", content: "" }]);
     if (chats.find(c => c.id === conversationId)?.title === "New Chat") {
       setChats(cs => cs.map(c => c.id === conversationId ? { ...c, title: userPrompt.slice(0, 30) } : c));
     }
-    await streamResponse(userPrompt);
+
+    let requestBody;
+    if (attachedFile) {
+      const formData = new FormData();
+      formData.append('message', userPrompt);
+      formData.append('model', model);
+      formData.append('conversationId', conversationId);
+      formData.append('file', attachedFile);
+      requestBody = formData;
+    } else {
+      requestBody = { message: userPrompt, model, conversationId };
+    }
+    await streamResponse(requestBody);
   }
 
-  // mic (optional)
-  const handleMicClick = async () => {
-    if (listening) { setListening(false); return; }
-    setListening(true);
-    try {
-      const res = await fetch("http://localhost:8000/transcribe", { method: "POST" });
-      const data = await res.json();
-      if (data.text) setInput(prev => (prev ? prev + " " + data.text : data.text));
-    } catch (err) { console.error(err); }
-    setListening(false);
-  };
+  // ... (mic handler is unchanged) ...
+    const handleMicClick = async () => {
+        if (listening) { setListening(false); return; }
+        setListening(true);
+        try {
+        const res = await fetch("http://localhost:8000/transcribe", { method: "POST" });
+        const data = await res.json();
+        if (data.text) setInput(prev => (prev ? prev + " " + data.text : data.text));
+        } catch (err) { console.error(err); }
+        setListening(false);
+    };
 
-  /* ───────── Notes/Code view state ───────── */
-  const [activePanel, setActivePanel] = useState("code"); // "code" | "notes" | "hidden"
-  const notesRef = useRef(null);
+    const [activePanel, setActivePanel] = useState("code");
+    const notesRef = useRef(null);
 
+  // +++ Modified to handle file submission
   const handleSend = async (e) => {
     e.preventDefault();
     const prompt = input.trim();
-    if (!prompt) return;
+    if (!prompt && !file) return; // Nothing to send
+
     setInput(""); // Clear input immediately
+    const fileToSend = file;
+    setFile(null); // Clear file chip from UI
 
     // Slash command: /search <query>
     if (prompt.toLowerCase().startsWith("/search ")) {
+      // (This part is unchanged, but now uses the refactored streamResponse)
       const query = prompt.substring(8).trim();
       setMessages(prev => [...prev, { type: 'user', content: prompt }, { type: 'ai', content: `*Searching for: ${query}...*` }]);
       setLoading(true);
@@ -516,7 +518,9 @@ export default function App() {
         
         const augmentedPrompt = `Please provide a comprehensive answer to the user's question based on the following search results. You must cite the most relevant sources using markdown links, like [Source 1](URL). Synthesize the information into a coherent response. Do not list the sources at the end; integrate them naturally into your answer.\n\nUser Question: ${query}\n\nSearch Results:\n${context}`;
         
-        await streamResponse(augmentedPrompt);
+        // Use the new request format for streamResponse
+        await streamResponse({ message: augmentedPrompt, model, conversationId });
+
       } catch (err) {
         setMessages(prev => {
           const msgs = [...prev];
@@ -539,205 +543,203 @@ export default function App() {
       return;
     }
 
-    sendPrompt(prompt);
+    // Default action: send prompt with optional file
+    sendPrompt(prompt, fileToSend);
   };
+  
+  // +++ Add file handling functions
+  const handleFileChange = (e) => {
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+        setFile(selectedFile);
+    }
+    // Reset the input value so the same file can be chosen again
+    e.target.value = null; 
+  };
+  const triggerFileInput = () => fileInputRef.current?.click();
+  const removeFile = () => setFile(null);
 
-  // suggestions
-  const DEFAULT_SUGGESTIONS = [
-    "deepseek-coder:33b",
-    "qwen2.5:14b-instruct",
-    "llama3.1:8b",
-    "mistral:7b-instruct",
-    "gemma:7b-instruct",
-    "llama3.1:70b"
-  ];
-  const suggestedFromInfo = Object.keys(MODEL_INFO || {});
-  let suggestionModels = suggestedFromInfo.length ? suggestedFromInfo : DEFAULT_SUGGESTIONS;
-  suggestionModels = suggestionModels.filter(m => !installedSet.has(m.trim().toLowerCase()));
-  const ensureCurrentModelOption =
-    !isInstalled(model) &&
-    !suggestionModels.map(s => s.toLowerCase()).includes((model || "").toLowerCase());
 
-  /* ───────── Split logic for resizable panes ───────── */
-  const [leftPct, setLeftPct] = useState(() => {
-    const v = Number(localStorage.getItem("helix:leftPct"));
-    return Number.isFinite(v) && v >= 20 && v <= 80 ? v : 58;
-  });
-  const draggingRef = useRef(false);
-
-  useEffect(() => {
-    localStorage.setItem("helix:leftPct", String(leftPct));
-  }, [leftPct]);
-
-  function onDragStart(e) {
-    e.preventDefault();
-    draggingRef.current = true;
-    document.body.classList.add("helix-noselect");
-  }
-  function onDragMove(e) {
-    if (!draggingRef.current) return;
-    const container = document.querySelector(".helix-workspace");
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
-    let pct = (x / rect.width) * 100;
-    pct = Math.max(25, Math.min(75, pct));
-    setLeftPct(pct);
-  }
-  function onDragEnd() {
-    if (!draggingRef.current) return;
-    draggingRef.current = false;
-    document.body.classList.remove("helix-noselect");
-  }
-  useEffect(() => {
-    const move = (e) => onDragMove(e);
-    const up   = () => onDragEnd();
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-    window.addEventListener("touchmove", move, { passive: false });
-    window.addEventListener("touchend", up);
-    return () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-      window.removeEventListener("touchmove", move);
-      window.removeEventListener("touchend", up);
-    };
-  }, []);
+  // ... (suggestions and split pane logic is unchanged) ...
+    const DEFAULT_SUGGESTIONS = [
+        "deepseek-coder:33b",
+        "qwen2.5:14b-instruct",
+        "llama3.1:8b",
+        "mistral:7b-instruct",
+        "gemma:7b-instruct",
+        "llama3.1:70b"
+    ];
+    const suggestedFromInfo = Object.keys(MODEL_INFO || {});
+    let suggestionModels = suggestedFromInfo.length ? suggestedFromInfo : DEFAULT_SUGGESTIONS;
+    suggestionModels = suggestionModels.filter(m => !installedSet.has(m.trim().toLowerCase()));
+    const ensureCurrentModelOption =
+        !isInstalled(model) &&
+        !suggestionModels.map(s => s.toLowerCase()).includes((model || "").toLowerCase());
+    const [leftPct, setLeftPct] = useState(() => {
+        const v = Number(localStorage.getItem("helix:leftPct"));
+        return Number.isFinite(v) && v >= 20 && v <= 80 ? v : 58;
+    });
+    const draggingRef = useRef(false);
+    useEffect(() => {
+        localStorage.setItem("helix:leftPct", String(leftPct));
+    }, [leftPct]);
+    function onDragStart(e) {
+        e.preventDefault();
+        draggingRef.current = true;
+        document.body.classList.add("helix-noselect");
+    }
+    function onDragMove(e) {
+        if (!draggingRef.current) return;
+        const container = document.querySelector(".helix-workspace");
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
+        let pct = (x / rect.width) * 100;
+        pct = Math.max(25, Math.min(75, pct));
+        setLeftPct(pct);
+    }
+    function onDragEnd() {
+        if (!draggingRef.current) return;
+        draggingRef.current = false;
+        document.body.classList.remove("helix-noselect");
+    }
+    useEffect(() => {
+        const move = (e) => onDragMove(e);
+        const up   = () => onDragEnd();
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+        window.addEventListener("touchmove", move, { passive: false });
+        window.addEventListener("touchend", up);
+        return () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        window.removeEventListener("touchmove", move);
+        window.removeEventListener("touchend", up);
+        };
+    }, []);
 
   return (
     <div className={`helix-root ${loading ? "is-thinking" : ""}`}>
-      <div className="helix-bg-glow" />
-      <div className="helix-noise" />
-      <div className="helix-copy-toast">Copied!</div>
-
-      <aside className="helix-sidebar">
-        <div className="helix-avatar-wrap">
-          <span className={`helix-avatar-pulse ${loading ? "active" : ""}`}></span>
-          <FaRobot className="helix-avatar" />
-        </div>
-        <div className="helix-sidebar-btns">
-          <button className="helix-btn" title="Code"><FaCode /></button>
-        </div>
-        <div className="helix-chat-list">
-          <button className="helix-mini-btn helix-new-chat" onClick={newChat}><FaPlus/> New Chat</button>
-          <ul>
-            {chats.map(c => (
-              <li key={c.id} className={`helix-chat-item ${c.id === conversationId ? "active" : ""}`}>
-                <button onClick={() => setConversationId(c.id)}>{c.title || "New Chat"}</button>
-                <span className="helix-chat-del" onClick={(e) => { e.stopPropagation(); deleteChat(c.id); }}><FaTrash/></span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="helix-theme-toggle">
-          <button
-            className="helix-mini-btn"
-            onClick={() => setTheme(prev => prev === "crimson" ? "deep" : "crimson")}
-            title="Toggle Theme"
-          >
-            {theme === "crimson" ? <FaMoon/> : <FaSun/>} {theme === "crimson" ? "Deep Space" : "Crimson"}
-          </button>
-        </div>
-      </aside>
-
-      <main className="helix-main">
-        <div className="helix-core-outer">
-          <HelixCore spinning={loading} colors={visuals.colors} speed={visuals.speed} />
-        </div>
-
-        {/* Model picker */}
-        <div className="helix-model-row">
-          <div className="helix-model-top">
-            <select
-              className="helix-model-select"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              title={MODEL_INFO[model] || "Local Ollama model"}
-            >
-              {ensureCurrentModelOption && (
-                <option value={model}>{model || "(no model selected)"}</option>
-              )}
-
-              <optgroup label="Installed">
-                {installed.length === 0 && <option value="" disabled>(none)</option>}
-                {installed.map((m) => (
-                  <option key={`i-${m}`} value={m}>{m}</option>
-                ))}
-              </optgroup>
-
-              <optgroup label="Suggestions">
-                {suggestionModels.length === 0 && <option value="" disabled>(none)</option>}
-                {suggestionModels.map(m => (
-                  <option key={`s-${m}`} value={m}>
-                    {m}{MODEL_INFO[m] ? ` — ${MODEL_INFO[m]}` : " — (not installed)"}
-                  </option>
-                ))}
-              </optgroup>
-            </select>
-
-            <button className="helix-mini-btn" onClick={refreshModels} disabled={loadingModels} title="Refresh installed models">
-              <FaSync /> {loadingModels ? "Refreshing..." : "Refresh"}
-            </button>
-          </div>
-
-          {/* power bar + description */}
-          <div className="helix-model-purpose">
-            <span className={`helix-badge ${isInstalled(model) ? "ok" : "warn"}`}>
-              {isInstalled(model) ? "Installed" : "Not installed"}
-            </span>
-            {confirmedModel && (
-              <span className="helix-badge now">Using: <strong>{confirmedModel}</strong></span>
-            )}
-            <PowerBadge tierLabel={visuals.tierLabel} />
-          </div>
-
-          <div className="powerbar-wrap" title={`Approx power for ${model}`}>
-            <div className="powerbar-track">
-              <div className="powerbar-fill" style={{width: `${visuals.powerPercent}%`}} />
+      {/* ... (sidebar and model picker JSX is mostly unchanged) ... */}
+        <div className="helix-bg-glow" />
+        <div className="helix-noise" />
+        <div className="helix-copy-toast">Copied!</div>
+        <aside className="helix-sidebar">
+            <div className="helix-avatar-wrap">
+            <span className={`helix-avatar-pulse ${loading ? "active" : ""}`}></span>
+            <FaRobot className="helix-avatar" />
             </div>
-            <span className="powerbar-label">{visuals.tierLabel}</span>
-          </div>
+            <div className="helix-sidebar-btns">
+            <button className="helix-btn" title="Code"><FaCode /></button>
+            </div>
+            <div className="helix-chat-list">
+            <button className="helix-mini-btn helix-new-chat" onClick={newChat}><FaPlus/> New Chat</button>
+            <ul>
+                {chats.map(c => (
+                <li key={c.id} className={`helix-chat-item ${c.id === conversationId ? "active" : ""}`}>
+                    <button onClick={() => setConversationId(c.id)}>{c.title || "New Chat"}</button>
+                    <span className="helix-chat-del" onClick={(e) => { e.stopPropagation(); deleteChat(c.id); }}><FaTrash/></span>
+                </li>
+                ))}
+            </ul>
+            </div>
+            <div className="helix-theme-toggle">
+            <button
+                className="helix-mini-btn"
+                onClick={() => setTheme(prev => prev === "crimson" ? "deep" : "crimson")}
+                title="Toggle Theme"
+            >
+                {theme === "crimson" ? <FaMoon/> : <FaSun/>} {theme === "crimson" ? "Deep Space" : "Crimson"}
+            </button>
+            </div>
+        </aside>
+        <main className="helix-main">
+            <div className="helix-core-outer">
+            <HelixCore spinning={loading} colors={visuals.colors} speed={visuals.speed} />
+            </div>
+            <div className="helix-model-row">
+            <div className="helix-model-top">
+                <select
+                className="helix-model-select"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                title={MODEL_INFO[model] || "Local Ollama model"}
+                >
+                {ensureCurrentModelOption && (
+                    <option value={model}>{model || "(no model selected)"}</option>
+                )}
+                <optgroup label="Installed">
+                    {installed.length === 0 && <option value="" disabled>(none)</option>}
+                    {installed.map((m) => (
+                    <option key={`i-${m}`} value={m}>{m}</option>
+                    ))}
+                </optgroup>
+                <optgroup label="Suggestions">
+                    {suggestionModels.length === 0 && <option value="" disabled>(none)</option>}
+                    {suggestionModels.map(m => (
+                    <option key={`s-${m}`} value={m}>
+                        {m}{MODEL_INFO[m] ? ` — ${MODEL_INFO[m]}` : " — (not installed)"}
+                    </option>
+                    ))}
+                </optgroup>
+                </select>
+                <button className="helix-mini-btn" onClick={refreshModels} disabled={loadingModels} title="Refresh installed models">
+                <FaSync /> {loadingModels ? "Refreshing..." : "Refresh"}
+                </button>
+            </div>
+            <div className="helix-model-purpose">
+                <span className={`helix-badge ${isInstalled(model) ? "ok" : "warn"}`}>
+                {isInstalled(model) ? "Installed" : "Not installed"}
+                </span>
+                {confirmedModel && (
+                <span className="helix-badge now">Using: <strong>{confirmedModel}</strong></span>
+                )}
+                <PowerBadge tierLabel={visuals.tierLabel} />
+            </div>
+            <div className="powerbar-wrap" title={`Approx power for ${model}`}>
+                <div className="powerbar-track">
+                <div className="powerbar-fill" style={{width: `${visuals.powerPercent}%`}} />
+                </div>
+                <span className="powerbar-label">{visuals.tierLabel}</span>
+            </div>
+            <div className="model-desc">
+                <em>{MODEL_INFO[model] || "Local Ollama model"}</em>
+            </div>
+            {modelsErr && <div className="helix-warning">Couldn’t read installed models. {modelsErr}</div>}
+            </div>
 
-          <div className="model-desc">
-            <em>{MODEL_INFO[model] || "Local Ollama model"}</em>
-          </div>
-
-          {modelsErr && <div className="helix-warning">Couldn’t read installed models. {modelsErr}</div>}
-        </div>
-
-        {/* ───────────────── Workspace: Chat ⇄ Editor (resizable) ───────────────── */}
-        <div className="helix-workspace">
-          {/* Left pane: CHAT */}
+      {/* --- Workspace --- */}
+      <div className="helix-workspace">
           <section
             className="helix-pane pane-chat"
             style={{ width: `${leftPct}%` }}
             onMouseMove={onDragMove}
             onTouchMove={onDragMove}
           >
+            {/* ... (pane-header and chat-area are unchanged) ... */}
             <div className="helix-pane-header">
-              <strong>Chat</strong>
-              <span className="pane-subtle">{MODEL_INFO[model] || "Local Ollama model"}</span>
+                <strong>Chat</strong>
+                <span className="pane-subtle">{MODEL_INFO[model] || "Local Ollama model"}</span>
             </div>
-
             <div className="helix-chat-area pane-scroll">
-              {messages.map((msg, idx) => (
-                <div key={idx} className={`helix-msg ${msg.type}`}>
-                  <div className={`helix-msg-bubble ${msg.type}`}>
-                    {renderRichContent(msg.content)}
-                  </div>
-                </div>
-              ))}
-              {loading && (
-                <div className="helix-msg ai">
-                  <div className="helix-msg-bubble ai">
-                    <span>Helix is thinking</span> <TypingDots />
-                  </div>
-                </div>
-              )}
-              <div ref={bottomRef} />
+                {messages.map((msg, idx) => (
+                    <div key={idx} className={`helix-msg ${msg.type}`}>
+                    <div className={`helix-msg-bubble ${msg.type}`}>
+                        {renderRichContent(msg.content)}
+                    </div>
+                    </div>
+                ))}
+                {loading && (
+                    <div className="helix-msg ai">
+                    <div className="helix-msg-bubble ai">
+                        <span>Helix is thinking</span> <TypingDots />
+                    </div>
+                    </div>
+                )}
+                <div ref={bottomRef} />
             </div>
 
-            {/* Tools toggle row */}
+            {/* ... (Memory section is unchanged) ... */}
             <div className="tools-toggle-row slim">
               <button
                 className={`mem-pill ${showMemory ? "on" : ""}`}
@@ -748,8 +750,6 @@ export default function App() {
                 {roleSaved ? <span className="chip-inline">role: {roleSaved}</span> : <span className="chip-inline dim">no role</span>}
               </button>
             </div>
-
-            {/* Memory (collapsible) */}
             {showMemory && (
               <div className="mem-dock minimalist">
                 <div className="mem-row">
@@ -760,7 +760,6 @@ export default function App() {
                   <button className="mem-btn ghost" onClick={loadFacts}>Reload</button>
                   <button className="mem-btn warn" onClick={clearUserFacts}>Clear</button>
                 </div>
-
                 <div className="mem-panel">
                   <div className="mem-section">
                     <strong>User Facts</strong>
@@ -774,7 +773,6 @@ export default function App() {
                       ))}
                     </div>
                   </div>
-
                   <div className="mem-section">
                     <strong>AI Role (this chat)</strong>{" "}
                     <span className="mem-dim">override instructions</span>
@@ -791,8 +789,19 @@ export default function App() {
                 </div>
               </div>
             )}
-
-            {/* Input row pinned to bottom of left pane */}
+            
+            {/* +++ Add file chip UI above the input form */}
+            {file && (
+              <div className="file-chip">
+                <FaPaperclip />
+                <span className="file-chip-name">{file.name}</span>
+                <button className="file-chip-del" onClick={removeFile} title="Remove file">
+                  <FaTimes />
+                </button>
+              </div>
+            )}
+            
+            {/* +++ Modified input row with file attachment button */}
             <form className="helix-input-row tight" onSubmit={handleSend}>
               <div className="helix-input-wrapper">
                 <input
@@ -802,6 +811,21 @@ export default function App() {
                   value={input}
                   onChange={e => setInput(e.target.value)}
                 />
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    style={{ display: 'none' }}
+                    accept=".pdf,.doc,.docx,.txt"
+                />
+                <button
+                  type="button"
+                  className="helix-icon-btn helix-attach-btn"
+                  title="Attach File"
+                  onClick={triggerFileInput}
+                >
+                  <FaPaperclip />
+                </button>
                 <button
                   type="button"
                   className={`helix-mic-btn ${listening ? "mic-on" : ""}`}
@@ -811,80 +835,71 @@ export default function App() {
                   <FaMicrophone />
                 </button>
               </div>
-              <button className="helix-send-btn" type="submit">Send</button>
+              <button className="helix-send-btn" type="submit" disabled={loading}>Send</button>
             </form>
           </section>
 
-          {/* Resize handle */}
-          <div
-            className="helix-resizer"
-            onMouseDown={onDragStart}
-            onTouchStart={onDragStart}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize panes"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowLeft") setLeftPct(p => Math.max(25, p - 2));
-              if (e.key === "ArrowRight") setLeftPct(p => Math.min(75, p + 2));
-            }}
-          />
-
-          {/* Right pane: EDITOR / NOTES / HIDDEN */}
-          <aside
-            className="helix-pane pane-editor"
-            style={{ width: `${100 - leftPct}%` }}
-            onMouseMove={onDragMove}
-            onTouchMove={onDragMove}
-          >
-            <div className="helix-pane-header">
-              <div>
-                <strong>Workspace</strong>
-                <span className="pane-subtle"> — switch views</span>
-              </div>
-              <div style={{marginLeft:"auto", display:"flex", gap:"6px"}}>
-                <button className={`mem-btn ${activePanel === "code" ? "" : "ghost"}`} onClick={()=>setActivePanel("code")}>Code</button>
-                <button className={`mem-btn ${activePanel === "notes" ? "" : "ghost"}`} onClick={()=>setActivePanel("notes")}>Notes</button>
-                <button className="mem-btn ghost" onClick={()=>setActivePanel("hidden")}>Hide</button>
-              </div>
-            </div>
-
-            <div className="pane-scroll" style={{padding:0}}>
-              {activePanel === "code" && (
-                <HelixEditor
-                  onInsertToChat={(codeFence) => {
-                    sendPrompt(`Please consider this code:\n\n${codeFence}`);
-                  }}
-                  onAskAI={(prompt) => {
-                    sendPrompt(prompt);
-                  }}
-                />
-              )}
-
-              {activePanel === "notes" && (
-                <NotesEditor
-                  ref={notesRef}
-                  onInsertToChat={(text) => {
-                    // Send note content to chat (both see it)
-                    sendPrompt(text);
-                  }}
-                  onAskAI={(prompt) => {
-                    // Ask Helix to improve the current note
-                    sendPrompt(prompt);
-                  }}
-                />
-              )}
-
-              {activePanel === "hidden" && (
-                <div className="mem-dim" style={{padding:12}}>
-                  Workspace hidden. Choose <em>Code</em> or <em>Notes</em> above.
+          {/* ... (Resizer and right pane are unchanged) ... */}
+            <div
+                className="helix-resizer"
+                onMouseDown={onDragStart}
+                onTouchStart={onDragStart}
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize panes"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                if (e.key === "ArrowLeft") setLeftPct(p => Math.max(25, p - 2));
+                if (e.key === "ArrowRight") setLeftPct(p => Math.min(75, p + 2));
+                }}
+            />
+            <aside
+                className="helix-pane pane-editor"
+                style={{ width: `${100 - leftPct}%` }}
+                onMouseMove={onDragMove}
+                onTouchMove={onDragMove}
+            >
+                <div className="helix-pane-header">
+                <div>
+                    <strong>Workspace</strong>
+                    <span className="pane-subtle"> — switch views</span>
                 </div>
-              )}
-            </div>
-          </aside>
+                <div style={{marginLeft:"auto", display:"flex", gap:"6px"}}>
+                    <button className={`mem-btn ${activePanel === "code" ? "" : "ghost"}`} onClick={()=>setActivePanel("code")}>Code</button>
+                    <button className={`mem-btn ${activePanel === "notes" ? "" : "ghost"}`} onClick={()=>setActivePanel("notes")}>Notes</button>
+                    <button className="mem-btn ghost" onClick={()=>setActivePanel("hidden")}>Hide</button>
+                </div>
+                </div>
+                <div className="pane-scroll" style={{padding:0}}>
+                {activePanel === "code" && (
+                    <HelixEditor
+                    onInsertToChat={(codeFence) => {
+                        sendPrompt(`Please consider this code:\n\n${codeFence}`);
+                    }}
+                    onAskAI={(prompt) => {
+                        sendPrompt(prompt);
+                    }}
+                    />
+                )}
+                {activePanel === "notes" && (
+                    <NotesEditor
+                    ref={notesRef}
+                    onInsertToChat={(text) => {
+                        sendPrompt(text);
+                    }}
+                    onAskAI={(prompt) => {
+                        sendPrompt(prompt);
+                    }}
+                    />
+                )}
+                {activePanel === "hidden" && (
+                    <div className="mem-dim" style={{padding:12}}>
+                    Workspace hidden. Choose <em>Code</em> or <em>Notes</em> above.
+                    </div>
+                )}
+                </div>
+            </aside>
         </div>
-        {/* ───────────────── End Workspace ───────────────── */}
-
         <p className="helix-status">Helix AI is running offline on your device.</p>
       </main>
     </div>

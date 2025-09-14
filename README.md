@@ -1,172 +1,325 @@
-# Helix: Your Private, Offline AI Coding Assistant
+# Helix — Local AI Coding Assistant (React + Node + Ollama) with RAG
 
-Helix is a futuristic, offline-first AI code assistant designed to run entirely on your local machine. It features a bold, Jarvis-style interface and a powerful suite of tools, including a multi-file code editor, a rich-text notes pad, and live web search capabilities, all powered by local LLMs through Ollama.
-
----
-
-![Helix Screenshot](https://i.imgur.com/k2e4b3J.jpeg)
-
-## 🚀 Core Features
-
--   **100% Offline & Private**: Your code and conversations never leave your device. Powered by [Ollama](https://ollama.ai).
--   **Integrated Workspace**: A seamless, resizable split-pane view with Chat, a Code Editor, and a Notes Editor working together.
--   **AI-Powered Code Editor**: A multi-tab editor with syntax highlighting for various languages. You can ask Helix to review, refactor, or explain your code directly from the editor.
--   **Rich-Text Notes Editor**: A scratchpad for your thoughts, plans, and documentation. Use the `/notes` command to quickly create new notes, and ask Helix to summarize or improve them.
--   **Live Web Search**: Grant Helix access to the internet for up-to-the-minute information. Using the `/search` command, the AI can answer questions about recent events, new technologies, or documentation.
--   **Persistent Memory & Roles**: Teach Helix facts about you or your project (e.g., `framework=React`) that persist across sessions. You can also assign a specific role to the AI for the duration of a single chat (e.g., "Act as a senior database architect").
--   **Multi-Model Support**: Easily switch between any Ollama models you have installed. The UI provides helpful hints and power-level indicators for suggested models.
--   **Futuristic UI**: A neon, glassmorphic, and animated interface that makes coding feel like you're in a sci-fi movie.
+Helix is a local, privacy‑friendly developer assistant. It pairs a modern React UI with a lightweight Node/Express backend that talks to **Ollama** for LLMs and embeddings. It supports **streaming chat**, **file uploads** (PDF/DOCX/TXT/HTML), **facts/role memory**, **a built‑in code editor and notes editor**, **web search**, and **Retrieval‑Augmented Generation (RAG)** so Helix can answer questions grounded in your own documents.
 
 ---
 
-## 🛠️ Setup and Installation
+## ✨ Features
 
-Follow these steps to get Helix up and running on your machine.
+* **Streaming Chat (SSE)** with local Ollama models (default: `gemma:7b-instruct`)
+* **File understanding**: upload PDFs/DOCX/TXT/HTML; content is extracted and added to your prompt automatically
+* **RAG (Retrieval‑Augmented Generation)**:
 
-### Prerequisites
+  * Ingest & index files
+  * Semantic search with local embeddings (`nomic-embed-text`)
+  * Ask questions with top‑K context chunks streamed to the LLM
+* **Facts & Role Memory**
 
--   **Node.js**: You must have Node.js version 18 or higher. We recommend using [nvm](https://github.com/nvm-sh/nvm) to manage Node versions.
--   **Ollama**: The Ollama service must be installed and running.
+  * Persist simple user facts (name/email/etc.) and a per‑conversation “AI role”
+* **Web Search (no API key)** via DuckDuckGo HTML, with top results you can paste into chat
+* **Modern UI**
 
-### Step 1: Install Ollama & Download Models
+  * Multiple neon themes
+  * **HelixEditor**: code editor (JS/TS/Python/Markdown/HTML/JSON) with local persistence & export
+  * **NotesEditor**: rich text notes with sanitization, import/export, and quick insert to chat
+  * Collapsible code blocks, markdown rendering, and animated DNA helix
+* **Local persistence** of chat/facts/roles and RAG index (JSON files)
 
-1.  **Download and install Ollama** for your operating system from the official site: [https://ollama.ai/download](https://ollama.ai/download)
+---
 
-2.  After installing, Ollama will be running in the background. Open your terminal and pull the recommended models. This is a **one-time download** that saves the models permanently on your machine.
-    ```bash
-    ollama pull deepseek-coder:33b
-    ollama pull qwen2:7b-instruct
-    ollama pull llama3:8b
-    ollama pull mistral:7b-instruct
-    ```
-3.  You can verify your installed models at any time by running:
-    ```bash
-    ollama list
-    ```
+## 🧱 Architecture
 
-### Step 2: Clone the Repository
+```
+React (frontend)
+  ├─ Chat UI (SSE streams)
+  ├─ HelixEditor (CodeMirror)
+  └─ NotesEditor (iframe-richtext)
 
-Clone the Helix project to your local machine.
+Node/Express (backend)
+  ├─ /api/stream (SSE chat)     ──▶ Ollama /api/generate
+  ├─ /api/generate (non-stream) ──▶ Ollama /api/generate
+  ├─ /api/models, /api/health   ──▶ Ollama /api/tags
+  ├─ /api/search (DDG scraper)
+  ├─ /api/memory/* (facts/roles persistence)
+  └─ RAG endpoints
+      • /api/rag/upload → parse + chunk + embed → JSON index
+      • /api/rag/search → cosine similarity
+      • /api/rag/ask (SSE) → prompt with sources → Ollama
+
+Ollama (local)
+  • LLM: gemma:7b-instruct (configurable)
+  • Embeddings: nomic-embed-text
+```
+
+---
+
+## ✅ Requirements
+
+* **Node.js 18+** (tested on Node 20)
+* **npm** (or pnpm/yarn if you prefer)
+* **Ollama** installed and running: [https://ollama.com](https://ollama.com)
+* macOS / Linux / Windows (WSL2 recommended on Windows)
+
+> Default ports: backend **4000**, frontend (React dev server) **3000**.
+
+---
+
+## 🚀 First‑Time Setup (from scratch)
+
+1. **Install & start Ollama**
+
 ```bash
-git clone [https://github.com/your-username/helix-ai-coder.git](https://github.com/your-username/helix-ai-coder.git)
-cd helix-ai-coder
+ollama serve
 ```
 
-### Step 3: Install Dependencies
+2. **Pull the models**
 
-Helix has two parts: the frontend (the React app) and the backend (the server). You need to install dependencies for both.
-
-1.  **Install Frontend Dependencies** (from the root directory):
-    ```bash
-    npm install
-    ```
-2.  **Install Backend Dependencies**:
-    ```bash
-    cd server
-    npm install
-    npm install cheerio # Required for the Web Search feature
-    cd ..
-    ```
-
-### Step 4: Configure the API URL
-
-In the project's **root** folder, create a new file named `.env` and add the following line. This tells the frontend where to find the backend server.
-
-```env
-REACT_APP_API_BASE=[http://127.0.0.1:4000](http://127.0.0.1:4000)
-```
-
----
-
-## ▶️ Running the Application
-
-You will need **two separate terminal windows** to run both the backend and frontend servers simultaneously.
-
-### 1. Start the Backend Server
-
-In your first terminal, navigate to the `server` directory and start the server.
 ```bash
-cd server
-npm run server
+ollama pull gemma:7b-instruct
+ollama pull nomic-embed-text
 ```
-You should see a confirmation message:
-```
-[helix-backend] listening on [http://127.0.0.1:4000](http://127.0.0.1:4000)
-```
-Leave this terminal window running.
 
-### 2. Start the Frontend Application
+3. **Install project dependencies** (at the project root where `server.js`, `App.js` live)
 
-In your second terminal, from the **root** directory, start the React development server.
+```bash
+npm install
+```
+
+> This installs the backend & frontend deps (e.g., `express`, `cors`, `multer`, `mammoth`, `pdf-parse`, `cheerio`, React, etc.). If you keep frontend and backend in separate folders with their own `package.json`, install in each.
+
+4. **(Optional) Configure environment**
+
+| Variable      | Default                  | Purpose                           |
+| ------------- | ------------------------ | --------------------------------- |
+| `OLLAMA_URL`  | `http://127.0.0.1:11434` | Where the backend talks to Ollama |
+| `EMBED_MODEL` | `nomic-embed-text`       | Embedding model used for RAG      |
+
+5. **Run the backend**
+
+```bash
+node server.js
+# or, if package.json has a script:
+# npm run server
+```
+
+You should see something like:
+
+```
+[helix-backend] listening on http://127.0.0.1:4000
+[helix-backend] Routes:
+  - GET /__ping
+  - GET /__routes
+  - GET /api/health
+  - GET /api/models
+  - POST /api/search
+  - ...
+  - POST /api/rag/ask
+```
+
+6. **Run the frontend (React)**
+
+If the React app is at the root (Create React App / Vite):
+
 ```bash
 npm start
 ```
-The application will automatically open in your web browser at `http://localhost:3000`.
+
+If the React app is in a subfolder (e.g., `client/`):
+
+```bash
+cd client
+npm install
+npm start
+```
+
+Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 
 ---
 
-## 🎛️ How to Use Helix: A Feature Guide
+## ▶️ Daily Use (not first time)
 
-### The Workspace
+1. Start **Ollama** in a terminal:
 
-The main interface is a split-pane view. You can drag the divider between the **Chat** pane and the **Workspace** pane to resize them. The Workspace can be switched between the Code Editor, Notes Editor, or hidden completely.
+```bash
+ollama serve
+```
 
-### 🔎 Web Search
+2. Start the **backend**:
 
-Give Helix access to live information from the web.
--   **How to use**: Type `/search` followed by your question in the chat prompt.
--   **Example**: `/search What is the latest version of React?`
--   **What it does**: Helix fetches the top web search results, reads them, and synthesizes a single, comprehensive answer, citing its sources with clickable links.
+```bash
+node server.js
+# (or npm run server)
+```
 
-### 📝 Notes Editor
+3. Start the **frontend** (another terminal):
 
-A rich-text editor for brainstorming, creating documentation, or drafting long-form text.
--   **How to create a note**: Type `/notes` in the chat. You can optionally give it a title.
--   **Example**: `/notes My Project Plan`
--   **Features**:
-    -   Use the toolbar for formatting (bold, lists, headings, etc.).
-    -   Click **"Insert to Chat"** to send the content of your note to the AI.
-    -   Click **"Ask Helix"** to get feedback, suggestions, or a summary of your note.
-
-### 💻 Code Editor
-
-A multi-file code editor with syntax highlighting and file management.
--   **Features**:
-    -   Create new files, open files from your disk, and save files.
-    -   Language is automatically detected from the file extension (e.g., `.js`, `.py`).
-    -   Click **"Insert to Chat"** to add the current file's code to your conversation.
-    -   Click **"Ask Helix"** to get a full code review, find bugs, or ask for improvements.
-
-### 🧠 Memory & Roles
-
-Give the AI context that it can remember.
--   **Memory**: Click "Memory Show" to open the Memory dock. You can add key-value facts about yourself or your project (e.g., `username=Vedansh`, `language=TypeScript`). This memory persists across all chats.
--   **AI Role**: In the Memory dock, you can assign a temporary role to the AI for the current conversation only. This is perfect for giving specific instructions.
-    -   **Example**: `You are a helpful tutor who explains complex topics simply.`
+```bash
+npm start
+# or (cd client && npm start)
+```
 
 ---
 
-## 💡 Troubleshooting
+## 🗣️ Using the Chat
 
-If you encounter an error, check here for a common fix.
+* Type a prompt and choose a model (default configured in `/api/health`).
+* Responses stream token‑by‑token.
+* **Upload a file** (PDF/DOCX/TXT/HTML) with your message to include its extracted text in the prompt.
+* **Facts/Role Memory** panel lets you pre‑seed user facts or define an AI role for the current conversation.
 
-**Error: `Search failed: No route for POST /api/search`**
--   **Cause**: Your backend server is running old code that doesn't have the search feature.
--   **Fix**: Stop your backend server (`CTRL + C`) and restart it (`npm run server`).
+**cURL test (non‑stream):**
 
-**Error: `Cannot find package 'cheerio'`**
--   **Cause**: A required backend dependency is missing.
--   **Fix**: Stop your backend server and run `cd server && npm install cheerio`, then restart the server.
+```bash
+curl -X POST http://127.0.0.1:4000/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemma:7b-instruct","prompt":"Say hi in one short sentence."}'
+```
 
-**Error: `Couldn't read installed models. Got HTML from server...`**
--   **Cause**: Your frontend cannot reach the backend or Ollama.
--   **Fix**:
-    1.  Ensure your `.env` file is configured correctly.
-    2.  Verify your backend server is running on the correct port (`4000`).
-    3.  Make sure the main Ollama service is running on your machine (`ollama list` should work in your terminal).
+**cURL test (stream, with file):**
+
+```bash
+curl -N -X POST http://127.0.0.1:4000/api/stream \
+  -F "message=Summarize this document." \
+  -F "file=@/path/to/your.pdf"
+```
 
 ---
 
-## 📜 License
+## 📚 RAG — Retrieval‑Augmented Generation
 
-This project is licensed under the MIT License.
+RAG lets Helix index your documents and then answer questions grounded by those sources.
+
+### Ingest a file (index it)
+
+```bash
+curl -F "file=@/path/to/notes.pdf" http://127.0.0.1:4000/api/rag/upload
+```
+
+Response includes `docId`, `title`, `chunks`.
+
+### List indexed documents
+
+```bash
+curl http://127.0.0.1:4000/api/rag/list
+```
+
+### Semantic search (top‑K chunks)
+
+```bash
+curl -X POST http://127.0.0.1:4000/api/rag/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"main conclusions about X","topK":5}'
+```
+
+### Ask with RAG (SSE stream)
+
+```bash
+curl -N -X POST http://127.0.0.1:4000/api/rag/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What does the document say about X?","topK":5,"model":"gemma:7b-instruct"}'
+```
+
+### Clear the index
+
+```bash
+# clear one
+curl -X DELETE "http://127.0.0.1:4000/api/rag/clear?docId=<docId>"
+
+# clear all
+curl -X DELETE "http://127.0.0.1:4000/api/rag/clear?docId=all"
+```
+
+**How it works (quick):**
+
+* Files are parsed (PDF via `pdf-parse`, DOCX via `mammoth`, HTML via `cheerio`, TXT directly)
+* Text is split into overlapping chunks (default 1200 chars, 200 overlap)
+* Each chunk is embedded with `EMBED_MODEL` via `Ollama /api/embeddings`
+* Vectors and metadata are stored in `data/rag/rag_index.json`
+* `/api/rag/search` ranks by cosine similarity
+* `/api/rag/ask` builds a prompt containing the top‑K chunks
+
+---
+
+## 🧰 Other Endpoints
+
+* **Health**: `GET /api/health` → current model & Ollama URL
+* **Models**: `GET /api/models` → installed model names
+* **Search**: `POST /api/search` `{ query }` → top DDG results (no key)
+* **Facts**:
+
+  * `GET /api/memory/facts?userId=default`
+  * `POST /api/memory/facts` `{ userId, facts: { key: value } }`
+  * `DELETE /api/memory/facts` `{ userId, key }` or `{ userId, all: true }`
+* **AI Role** (per conversation):
+
+  * `GET /api/memory/ai-role?conversationId=default`
+  * `POST /api/memory/ai-role` `{ conversationId, role }`
+  * `DELETE /api/memory/ai-role` `{ conversationId }`
+
+---
+
+## 🧪 Quick Smoke Tests
+
+```bash
+# server up
+curl http://127.0.0.1:4000/__routes
+
+# ollama reachable
+curl -s http://127.0.0.1:11434/api/tags | jq .models[0]
+
+# simple gen
+curl -s -X POST http://127.0.0.1:4000/api/generate -H 'Content-Type: application/json' \
+  -d '{"prompt":"1+1?","model":"gemma:7b-instruct"}' | jq .data.response
+```
+
+---
+
+## 🛠️ Troubleshooting
+
+* **Embeddings fail / RAG errors**: ensure `ollama serve` is running and `ollama pull nomic-embed-text` is done.
+* **No streaming tokens in curl**: include `-N` (no buffering) and check server logs.
+* **Port conflicts**: change the React dev server port or backend `PORT` env var.
+* **PDF parse errors**: we import `pdf-parse` safely (CJS) and only call it at request time.
+* **Windows**: prefer WSL2 for better tooling compatibility.
+
+---
+
+## 📦 Project Layout (typical)
+
+```
+.
+├── App.js / App.css / index.js / index.css / Helix.css
+├── HelixEditor.jsx / NotesEditor.jsx
+├── server.js
+├── package.json
+└── data/
+    ├── chat_memory.json
+    ├── facts_memory.json
+    ├── roles_memory.json
+    └── rag/
+        └── rag_index.json
+```
+
+> If you split frontend/backend into separate folders later (e.g., `client/` and `server/`), update this README and scripts accordingly.
+
+---
+
+## 🔒 Privacy
+
+Everything runs locally. Documents you ingest for RAG are embedded on your machine; the index is stored as JSON under `data/rag/`.
+
+---
+
+## 🗺️ Roadmap Ideas
+
+* Vector DB backend (SQLite‑VSS / pgvector / HNSW)
+* Multi‑file RAG uploads with background indexing
+* Source‑aware citations in UI
+* Image understanding (vision models) for diagrams/screenshots
+* Model profiles per theme/task
+
+---
+
+## 📝 License
+
+MIT (or your preferred license) — update this section to match your choice.

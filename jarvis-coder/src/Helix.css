@@ -671,3 +671,58 @@ body {
 .helix-msg-bubble a:hover {
   color: var(--text);
 }
+/* ... (at the end of the file) ... */
+
+/* ---------- File Upload UI ---------- */
+.file-chip {
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.file-chip-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-chip-del {
+  background: none;
+  border: none;
+  color: var(--subtle);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+.file-chip-del:hover {
+  color: var(--text);
+}
+
+
+/* Adjust input row buttons */
+.helix-input {
+  /* Make space for two buttons now */
+  padding: 13px 88px 13px 20px;
+}
+
+.helix-attach-btn {
+  position: absolute;
+  top: 50%;
+  right: 48px; /* Position next to the mic button */
+  transform: translateY(-50%);
+  color: var(--subtle);
+  font-size: 1.2rem;
+  padding: 6px;
+}
+.helix-attach-btn:hover {
+  color: var(--text);
+}

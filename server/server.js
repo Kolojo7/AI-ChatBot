@@ -5,6 +5,13 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import * as cheerio from "cheerio";
+import multer from "multer";
+import mammoth from "mammoth";
+import { createRequire } from "module";
+
+// Use CJS import for pdf-parse to avoid ESM/entry quirks
+const require = createRequire(import.meta.url);
+const pdf = require("pdf-parse"); // usage: await pdf(buffer)
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -129,18 +136,29 @@ app.disable("x-powered-by");
 app.use(cors());
 app.use(express.json());
 
-// Sanity routes (so you can verify you’re on the right server file)
+// Multer (memory) for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
+});
+
+// Sanity routes registry + helper
 const ROUTES = [];
-const addRoute = (method, path, handler) => {
-  ROUTES.push(`${method.toUpperCase()} ${path}`);
-  app[method](path, handler);
+const addRoute = (method, routePath, handler, middleware = []) => {
+  ROUTES.push(`${method.toUpperCase()} ${routePath}`);
+  if (middleware.length) {
+    app[method](routePath, ...middleware, handler);
+  } else {
+    app[method](routePath, handler);
+  }
 };
+
 addRoute("get", "/__ping", (req, res) => res.json({ ok: true, server: "helix-backend" }));
 addRoute("get", "/__routes", (req, res) => res.json({ ok: true, routes: ROUTES }));
 
 const OLLAMA = process.env.OLLAMA_URL || "http://127.0.0.1:11434";
 
-// Ollama helpers
+// Ollama helpers (Node 18+ has global fetch)
 async function ollamaJSON(url, body) {
   const r = await fetch(url, {
     method: "POST",
@@ -166,7 +184,7 @@ async function* ollamaStream(url, body) {
   }
 }
 
-// Health & models
+// ------------------------------ Health & models ------------------------------
 addRoute("get", "/api/health", async (_, res) => {
   try {
     const r = await fetch(`${OLLAMA}/api/tags`);
@@ -188,41 +206,37 @@ addRoute("get", "/api/models", async (_, res) => {
   }
 });
 
-// +++ Web Search (key-free)
+// ------------------------------ Web Search (DuckDuckGo HTML) ------------------------------
 async function searchDDG(query) {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
   try {
     const res = await fetch(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-      }
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      },
     });
     if (!res.ok) throw new Error(`DDG status ${res.status}`);
     const html = await res.text();
     const $ = cheerio.load(html);
     const results = [];
     $("div.result").each((i, el) => {
-      if (results.length >= 5) return; // Limit to 5 results
+      if (results.length >= 5) return;
       const title = $(el).find("h2.result__title > a.result__a").text().trim();
       const link = $(el).find("a.result__url").attr("href");
       const snippet = $(el).find("a.result__snippet").text().trim();
-      if (title && link && snippet) {
-        results.push({ title, link, snippet });
-      }
+      if (title && link && snippet) results.push({ title, link, snippet });
     });
     return results;
   } catch (e) {
     console.error(`[searchDDG] failed for query "${query}":`, e);
-    return []; // Return empty on failure to be resilient
+    return [];
   }
 }
-
 addRoute("post", "/api/search", async (req, res) => {
   try {
     const query = pick(req.body, "query", "");
     if (!query) return res.json({ ok: false, error: "query required" });
-    // This setup is resilient; if DDG fails, it returns [], which the front-end handles.
-    // Could be extended to try another source if searchDDG returns an empty array.
     const results = await searchDDG(query);
     res.json({ ok: true, results });
   } catch (e) {
@@ -230,7 +244,7 @@ addRoute("post", "/api/search", async (req, res) => {
   }
 });
 
-// -------- FACTS endpoints --------
+// ------------------------------ FACTS endpoints ------------------------------
 addRoute("get", "/api/memory/facts", (req, res) => {
   const userId = req.query.userId || "default";
   res.json({ ok: true, facts: getFacts(userId) });
@@ -254,7 +268,7 @@ addRoute("delete", "/api/memory/facts", (req, res) => {
   res.json({ ok });
 });
 
-// -------- AI ROLE endpoints (per conversation) --------
+// ------------------------------ AI ROLE endpoints ------------------------------
 addRoute("get", "/api/memory/ai-role", (req, res) => {
   const conversationId = req.query.conversationId || "default";
   res.json({ ok: true, role: getRole(conversationId) });
@@ -271,7 +285,7 @@ addRoute("delete", "/api/memory/ai-role", (req, res) => {
   res.json({ ok: true, role: "" });
 });
 
-// -------- generation (non-stream) --------
+// ------------------------------ Generation (non-stream) ------------------------------
 addRoute("post", "/api/generate", async (req, res) => {
   try {
     const model  = pick(req.body, "model", "gemma:7b-instruct");
@@ -283,7 +297,9 @@ addRoute("post", "/api/generate", async (req, res) => {
     if (Object.keys(auto).length) upsertUserFacts(userId, auto);
 
     pushTurn(cid, "user", prompt);
-    const history = lastTurns(cid, 8).map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
+    const chatHistory = lastTurns(cid, 8)
+      .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+      .join("\n");
 
     const facts = getFacts(userId);
     const userBlob = Object.keys(facts.user).length
@@ -303,7 +319,8 @@ CRITICAL IDENTITY RULES:
 - ASSISTANT FACTS describe YOU, Helix. Refer to yourself as "I".
 - Never claim USER facts as your own, and never state assistant facts as the user's.`;
 
-    const fullPrompt = `${system}\n${roleLine}${userBlob}${aiBlob}${history}\nUSER: ${prompt}\nASSISTANT:`;
+    const fullPrompt =
+      `${system}\n${roleLine}${userBlob}${aiBlob}${chatHistory}\nUSER: ${prompt}\nASSISTANT:`;
 
     const j = await ollamaJSON(`${OLLAMA}/api/generate`, { model, prompt: fullPrompt, stream: false });
     const reply = j?.response || "(no response)";
@@ -314,48 +331,357 @@ CRITICAL IDENTITY RULES:
   }
 });
 
-// -------- generation (stream) --------
-addRoute("post", "/api/stream", async (req, res) => {
-  try {
-    const model   = pick(req.body, "model", "gemma:7b-instruct");
-    const message = pick(req.body, "message", "");
-    const userId  = "default";
-    const cid     = pick(req.body, "conversationId", "default");
+// ------------------------------ Generation (stream, optional file) ------------------------------
+addRoute(
+  "post",
+  "/api/stream",
+  async (req, res) => {
+    try {
+      const model   = pick(req.body, "model", "gemma:7b-instruct");
+      const message = pick(req.body, "message", "");
+      const userId  = "default";
+      const cid     = pick(req.body, "conversationId", "default");
 
-    const auto = extractUserFacts(message);
-    if (Object.keys(auto).length) upsertUserFacts(userId, auto);
+      // Optional file context (handled by multer)
+      let fileContext = "";
+      if (req.file) {
+        try {
+          let text = "";
+          if (req.file.mimetype === "application/pdf") {
+            const { text: parsedText } = await pdf(req.file.buffer);
+            text = parsedText || "";
+          } else if (req.file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+            const { value } = await mammoth.extractRawText({ buffer: req.file.buffer });
+            text = value || "";
+          } else if (req.file.mimetype === "text/plain") {
+            text = req.file.buffer.toString("utf8");
+          }
+          fileContext = text
+            ? `The user has uploaded a file named "${req.file.originalname}". Its content is provided below for context.\n\n--- FILE CONTENT ---\n${text}\n--- END FILE CONTENT ---\n\n`
+            : `[System note: User uploaded a file "${req.file.originalname}", but it was of an unsupported type or empty.]\n\n`;
+        } catch (e) {
+          console.error("File parsing error:", e);
+          fileContext = `[System note: An error occurred while trying to read the uploaded file "${req.file.originalname}".]\n\n`;
+        }
+      }
 
-    pushTurn(cid, "user", message);
-    const history = lastTurns(cid, 8).map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
+      // Extract simple facts, save
+      const auto = extractUserFacts(message);
+      if (Object.keys(auto).length) upsertUserFacts(userId, auto);
 
-    const facts = getFacts(userId);
-    const userBlob = Object.keys(facts.user).length
-      ? "USER FACTS (about the HUMAN):\n" +
-        Object.entries(facts.user).map(([k, v]) => `- ${k}: ${v}`).join("\n") + "\n\n"
-      : "";
-    const aiBlob =
-      "ASSISTANT FACTS (about YOU, the AI):\n" +
-      Object.entries(facts.ai).map(([k, v]) => `- ${k}: ${v}`).join("\n") + "\n\n";
+      // Persist user turn
+      const userTurnContent = fileContext ? `${fileContext}User's message: ${message}` : message;
+      pushTurn(cid, "user", userTurnContent);
 
-    const role = getRole(cid);
-    const roleLine = role ? `ASSISTANT ROLE (chat-scoped): ${role}\n\n` : "";
+      // Build short chat history
+      const chatHistory = lastTurns(cid, 8)
+        .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+        .join("\n");
 
-    const system = `You are Helix, a local coding assistant.
+      const facts = getFacts(userId);
+      const userBlob = Object.keys(facts.user).length
+        ? "USER FACTS (about the HUMAN):\n" +
+          Object.entries(facts.user).map(([k, v]) => `- ${k}: ${v}`).join("\n") + "\n\n"
+        : "";
+      const aiBlob =
+        "ASSISTANT FACTS (about YOU, the AI):\n" +
+        Object.entries(facts.ai).map(([k, v]) => `- ${k}: ${v}`).join("\n") + "\n\n";
+
+      const role = getRole(cid);
+      const roleLine = role ? `ASSISTANT ROLE (chat-scoped): ${role}\n\n` : "";
+
+      const system = `You are Helix, a local coding assistant.
 CRITICAL IDENTITY RULES:
 - USER FACTS describe the HUMAN. Use second-person ("you").
 - ASSISTANT FACTS describe YOU. Use first-person ("I").
 - Do not conflate the two.`;
 
-    const fullPrompt = `${system}\n${roleLine}${userBlob}${aiBlob}${history}\nUSER: ${message}\nASSISTANT:`;
+      const fullPrompt =
+        `${system}\n${roleLine}${userBlob}${aiBlob}${chatHistory}\n` +
+        `USER: ${userTurnContent}\nASSISTANT:`;
 
+      // SSE headers
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+      res.write(`event: meta\ndata: ${JSON.stringify({ model })}\n\n`);
+
+      let acc = "";
+      for await (const line of ollamaStream(`${OLLAMA}/api/generate`, {
+        model, prompt: fullPrompt, stream: true
+      })) {
+        try {
+          const j = JSON.parse(line);
+          if (j.response) {
+            acc += j.response;
+            res.write(`data: ${JSON.stringify({ token: j.response })}\n\n`);
+          }
+          if (j.done) {
+            pushTurn(cid, "assistant", acc || "(no response)");
+            res.write("event: done\ndata: ok\n\n");
+          }
+        } catch {
+          acc += line;
+          res.write(`data: ${JSON.stringify({ token: line })}\n\n`);
+        }
+      }
+      res.end();
+    } catch (e) {
+      res.write(`event: error\ndata: ${String(e?.message || e)}\n\n`);
+      res.end();
+    }
+  },
+  [upload.single("file")]   // attach multer via addRoute helper
+);
+
+// ------------------------------ RAG (Retrieval-Augmented Generation) ------------------------------
+const EMBED_MODEL = process.env.EMBED_MODEL || "nomic-embed-text"; // run: `ollama pull nomic-embed-text`
+
+const RAG_DIR = path.join(DATA_DIR, "rag");
+const RAG_INDEX_FILE = path.join(RAG_DIR, "rag_index.json");
+if (!fs.existsSync(RAG_DIR)) fs.mkdirSync(RAG_DIR, { recursive: true });
+
+// In-memory index: { vectors: Array<ChunkRecord>, docs: { [docId]: DocMeta } }
+let ragIndex = loadRagIndex();
+
+function loadRagIndex() {
+  try {
+    if (fs.existsSync(RAG_INDEX_FILE)) {
+      const j = JSON.parse(fs.readFileSync(RAG_INDEX_FILE, "utf-8"));
+      j.vectors ||= [];
+      j.docs ||= {};
+      return j;
+    }
+  } catch (e) {
+    console.error("[RAG] failed loading index:", e);
+  }
+  return { vectors: [], docs: {} };
+}
+function saveRagIndexSoon() {
+  clearTimeout(saveRagIndexSoon._id);
+  saveRagIndexSoon._id = setTimeout(() => {
+    try {
+      fs.writeFileSync(RAG_INDEX_FILE, JSON.stringify(ragIndex, null, 2));
+    } catch (e) {
+      console.error("[RAG] failed saving index:", e);
+    }
+  }, 100);
+}
+
+function cosine(a = [], b = []) {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length && i < b.length; i++) {
+    const x = a[i], y = b[i];
+    dot += x * y; na += x * x; nb += y * y;
+  }
+  if (!na || !nb) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+function chunkText(text, chunkSize = 1200, overlap = 200) {
+  const out = [];
+  text = (text || "").replace(/\r/g, "");
+  let i = 0;
+  while (i < text.length) {
+    const end = Math.min(text.length, i + chunkSize);
+    const slice = text.slice(i, end).trim();
+    if (slice) out.push({ start: i, end, text: slice });
+    i = end - overlap;
+    if (i < 0) i = 0;
+  }
+  return out;
+}
+async function embedText(str) {
+  const j = await ollamaJSON(`${OLLAMA}/api/embeddings`, { model: EMBED_MODEL, prompt: str });
+  const emb = j?.embedding;
+  if (!emb || !Array.isArray(emb)) throw new Error("embedding failed (check EMBED_MODEL & ollama)");
+  return emb;
+}
+
+async function extractTextFromUpload(file) {
+  const mime = file.mimetype;
+  if (mime === "application/pdf") {
+    const { text } = await pdf(file.buffer);
+    return text || "";
+  }
+  if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    const { value } = await mammoth.extractRawText({ buffer: file.buffer });
+    return value || "";
+  }
+  if (mime === "text/plain" || mime === "text/markdown") {
+    return file.buffer.toString("utf8");
+  }
+  if (mime === "text/html") {
+    const $ = cheerio.load(file.buffer.toString("utf8"));
+    return $("body").text();
+  }
+  return file.buffer?.toString?.("utf8") || "";
+}
+
+function newDocId() {
+  return "doc_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+}
+
+async function indexDocument({ title, mime, text }) {
+  const docId = newDocId();
+  const chunks = chunkText(text);
+  let added = 0;
+
+  for (let idx = 0; idx < chunks.length; idx++) {
+    const c = chunks[idx];
+    const emb = await embedText(c.text);
+    ragIndex.vectors.push({
+      id: `${docId}#${idx + 1}`,
+      docId,
+      title,
+      mime,
+      charStart: c.start,
+      charEnd: c.end,
+      chunk: c.text,
+      embedding: emb,
+    });
+    added++;
+    if ((idx + 1) % 8 === 0) saveRagIndexSoon();
+  }
+
+  ragIndex.docs[docId] = {
+    docId,
+    title,
+    mime,
+    chunks: added,
+    chars: text.length,
+    addedAt: Date.now(),
+  };
+  saveRagIndexSoon();
+  return ragIndex.docs[docId];
+}
+
+function removeDoc(docId) {
+  const before = ragIndex.vectors.length;
+  ragIndex.vectors = ragIndex.vectors.filter(v => v.docId !== docId);
+  delete ragIndex.docs[docId];
+  saveRagIndexSoon();
+  return before - ragIndex.vectors.length;
+}
+
+async function searchRag(query, topK = 5) {
+  const qEmb = await embedText(query);
+  const scored = ragIndex.vectors.map(v => ({
+    ...v,
+    score: cosine(qEmb, v.embedding),
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, Math.max(1, Math.min(topK, 50)));
+}
+
+// Ingest & index a file
+addRoute(
+  "post",
+  "/api/rag/upload",
+  async (req, res) => {
+    try {
+      if (!req.file) return res.json({ ok: false, error: "file required (multipart field: 'file')" });
+      const text = await extractTextFromUpload(req.file);
+      if (!text?.trim()) return res.json({ ok: false, error: "file had no extractable text" });
+      const meta = await indexDocument({
+        title: req.file.originalname,
+        mime: req.file.mimetype,
+        text,
+      });
+      res.json({ ok: true, doc: meta });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  },
+  [upload.single("file")]
+);
+
+// List docs
+addRoute("get", "/api/rag/list", (req, res) => {
+  res.json({
+    ok: true,
+    docs: Object.values(ragIndex.docs).sort((a, b) => b.addedAt - a.addedAt),
+    count: ragIndex.vectors.length,
+    embedModel: EMBED_MODEL,
+  });
+});
+
+// Clear one doc or all
+addRoute("delete", "/api/rag/clear", (req, res) => {
+  const docId = req.query.docId || req.body?.docId;
+  if (!docId || docId === "all") {
+    ragIndex = { vectors: [], docs: {} };
+    saveRagIndexSoon();
+    return res.json({ ok: true, cleared: "all" });
+  }
+  const removed = removeDoc(docId);
+  res.json({ ok: true, cleared: docId, removed });
+});
+
+// Semantic search
+addRoute("post", "/api/rag/search", async (req, res) => {
+  try {
+    const query = (req.body?.query || "").trim();
+    const topK = Math.max(1, Math.min(Number(req.body?.topK) || 5, 50));
+    if (!query) return res.json({ ok: false, error: "query required" });
+
+    const hits = await searchRag(query, topK);
+    res.json({
+      ok: true,
+      hits: hits.map((h, i) => ({
+        rank: i + 1,
+        id: h.id,
+        docId: h.docId,
+        title: h.title,
+        score: Number(h.score.toFixed(4)),
+        preview: h.chunk.slice(0, 280),
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Ask with RAG (SSE)
+addRoute("post", "/api/rag/ask", async (req, res) => {
+  try {
+    const question = (req.body?.question || "").trim();
+    const model = req.body?.model || "gemma:7b-instruct";
+    const topK = Math.max(1, Math.min(Number(req.body?.topK) || 5, 20));
+    if (!question) {
+      return res.status(400).json({ ok: false, error: "question required" });
+    }
+
+    const hits = await searchRag(question, topK);
+    const sourcesBlock = hits.map((h, i) => {
+      const tag = `[${i + 1} • ${h.title} • ${h.docId} • score ${h.score.toFixed(3)}]`;
+      return `${tag}\n${h.chunk}`;
+    }).join("\n\n---\n\n");
+
+    const system = `You are Helix with Retrieval-Augmented Generation.
+You MUST answer using ONLY the information from the "SOURCES" below. If the sources don't contain the answer, say you don't know.
+When relevant, reference source tags like [1], [2], etc. Keep answers concise and technical.`;
+
+    const prompt =
+`${system}
+
+SOURCES:
+${sourcesBlock}
+
+QUESTION:
+${question}
+
+FINAL ANSWER (with inline [source] tags):`;
+
+    // SSE setup
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
-    res.write(`event: meta\ndata: ${JSON.stringify({ model })}\n\n`);
+    res.write(`event: meta\ndata: ${JSON.stringify({ model, topK, sources: hits.map((h,i)=>({i:i+1,title:h.title,docId:h.docId})) })}\n\n`);
 
     let acc = "";
-    for await (const line of ollamaStream(`${OLLAMA}/api/generate`, { model, prompt: fullPrompt, stream: true })) {
+    for await (const line of ollamaStream(`${OLLAMA}/api/generate`, { model, prompt, stream: true })) {
       try {
         const j = JSON.parse(line);
         if (j.response) {
@@ -363,7 +689,6 @@ CRITICAL IDENTITY RULES:
           res.write(`data: ${JSON.stringify({ token: j.response })}\n\n`);
         }
         if (j.done) {
-          pushTurn(cid, "assistant", acc || "(no response)");
           res.write("event: done\ndata: ok\n\n");
         }
       } catch {
@@ -378,7 +703,7 @@ CRITICAL IDENTITY RULES:
   }
 });
 
-// Clear memories
+// ------------------------------ Clear memories ------------------------------
 addRoute("post", "/api/memory/clear", (req, res) => {
   const what = pick(req.body, "what", "chat"); // "chat" | "facts"
   if (what === "chat") {
@@ -394,8 +719,8 @@ addRoute("post", "/api/memory/clear", (req, res) => {
   res.json({ ok: false, error: "unknown 'what'" });
 });
 
-// JSON 404 (so you never see the HTML "Cannot POST" page)
-app.all("*", (req, res) => {
+// ------------------------------ JSON 404 ------------------------------
+addRoute("all", "*", (req, res) => {
   res.status(404).json({ ok: false, error: `No route for ${req.method} ${req.path}` });
 });
 
