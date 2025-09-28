@@ -176,12 +176,16 @@ async function* ollamaStream(url, body) {
   if (!r.ok || !r.body) throw new Error(`upstream error ${r.status}`);
   const reader = r.body.getReader();
   const dec = new TextDecoder();
+  let buf = "";
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    const chunk = dec.decode(value, { stream: true });
-    for (const line of chunk.split("\n").filter(Boolean)) yield line;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() || "";
+    for (const line of lines.filter(Boolean)) yield line;
   }
+  if (buf.trim()) yield buf.trim();
 }
 
 // ------------------------------ Health & models ------------------------------
@@ -205,6 +209,113 @@ addRoute("get", "/api/models", async (_, res) => {
     res.json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+/* ---------- Install / Uninstall models ---------- */
+// Stream install (pull) progress via SSE
+addRoute("get", "/api/models/pull", async (req, res) => {
+  try {
+    const name = String(req.query.name || "").trim();
+    if (!name) {
+      res.status(400).json({ ok: false, error: "name required" });
+      return;
+    }
+    // SSE headers
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    // Kick off Ollama pull with stream=true
+    const r = await fetch(`${OLLAMA}/api/pull`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, stream: true }),
+    });
+    if (!r.ok || !r.body) {
+      res.write(`event: error\ndata: ${JSON.stringify({ error: `upstream ${r.status}` })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let doneFlag = false;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() || "";
+      for (const line of lines.filter(Boolean)) {
+        try {
+          const j = JSON.parse(line);
+          const payload = {
+            status: j.status || "",
+            percent: typeof j.percent === "number" ? Math.max(0, Math.min(100, j.percent)) : undefined,
+            total: j.total,
+            completed: j.completed,
+            digest: j.digest,
+            done: !!j.done,
+          };
+          if (payload.done) doneFlag = true;
+          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        } catch {
+          res.write(`data: ${JSON.stringify({ status: line })}\n\n`);
+        }
+      }
+    }
+    if (!doneFlag) {
+      res.write(`data: ${JSON.stringify({ status: "finished", done: true, percent: 100 })}\n\n`);
+    }
+    res.end();
+  } catch (e) {
+    res.write(`event: error\ndata: ${JSON.stringify({ error: String(e?.message || e) })}\n\n`);
+    res.end();
+  }
+});
+
+// Uninstall (delete) a model — NOTE: Ollama expects { name }, not { model }
+// ---- replace your existing uninstall route with this ----
+addRoute("post", "/api/models/delete", async (req, res) => {
+  const name = (pick(req.body, "name", "") || "").trim();
+  if (!name) return res.status(400).json({ ok: false, error: "name required" });
+
+  async function tryDelete(body, method = "DELETE") {
+    const r = await fetch(`${OLLAMA}/api/delete`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return r;
+  }
+
+  try {
+    // 1) Preferred: DELETE with { name }
+    let r = await tryDelete({ name }, "DELETE");
+
+    // 2) Some builds want { model } instead of { name }
+    if (!r.ok && (r.status === 400 || r.status === 404)) {
+      r = await tryDelete({ model: name }, "DELETE");
+    }
+
+    // 3) Older proxies sometimes only allow POST to /api/delete
+    if (!r.ok && (r.status === 405 || r.status === 501)) {
+      r = await tryDelete({ name }, "POST");
+    }
+
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      return res.status(500).json({ ok: false, error: `upstream ${r.status}: ${txt || "delete failed"}` });
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 
 // ------------------------------ Web Search (DuckDuckGo HTML) ------------------------------
 async function searchDDG(query) {
